@@ -50,7 +50,7 @@ openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 async def ask_claude(system_prompt: str, user_message: str) -> str:
     response = await claude_client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=600,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}]
