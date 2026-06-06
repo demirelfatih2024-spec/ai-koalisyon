@@ -31,10 +31,12 @@ COLOR_MAP = {"🔵": "color-blue", "🟢": "color-green", "🟡": "color-yellow"
 
 try:
     ANTHROPIC_KEY = st.secrets["ANTHROPIC_API_KEY"]
-    GROQ_KEY      = st.secrets["GROQ_API_KEY"]
+    GEMINI_KEY    = st.secrets["GEMINI_API_KEY"]
 except KeyError as e:
     st.error(f"❌ Secrets eksik: {e} — Streamlit Cloud'da Settings > Secrets bölümüne anahtarları ekle.")
     st.stop()
+
+claude_client = get_clients(ANTHROPIC_KEY, GEMINI_KEY)
 
 st.markdown("## 🤖 AI Koalisyonu")
 st.markdown("Sorunuzu yazın — 4 ajan farklı perspektiflerden tartışsın.")
@@ -52,7 +54,6 @@ if st.button("⚡ Tartışmayı Başlat"):
     else:
         st.markdown(f"<div style='background:#161616;border:1px solid #333;border-radius:10px;padding:14px 18px;font-family:monospace;font-size:0.85rem;color:#aaa;margin-bottom:24px'>❓ {question}</div>", unsafe_allow_html=True)
 
-        claude_client, groq_client = get_clients(ANTHROPIC_KEY, GROQ_KEY)
         previous_text = ""
 
         for name, config in AGENTS.items():
@@ -61,7 +62,7 @@ if st.button("⚡ Tartışmayı Başlat"):
 
             with st.spinner(f"{emoji} {name} düşünüyor..."):
                 response = asyncio.run(
-                    get_agent_response(claude_client, groq_client, name, config, question, previous_text)
+                    get_agent_response(claude_client, name, config, question, previous_text)
                 )
 
             previous_text += f"\n{name}: {response}\n"
