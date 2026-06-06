@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response, GROQ_RATE_LIMIT_MSG
+from pdf_report import generate_pdf
 
 st.set_page_config(page_title="AI Koalisyonu", page_icon="🤖", layout="centered")
 
@@ -96,14 +97,20 @@ if "agent_cards" not in st.session_state:
     st.session_state.agent_cards = []
 if "question" not in st.session_state:
     st.session_state.question = ""
+if "agent_responses" not in st.session_state:
+    st.session_state.agent_responses = []
+if "coord_summary" not in st.session_state:
+    st.session_state.coord_summary = ""
 
 def render_agent_card(name, config, response):
     c = COLOR_CONFIG[config["color"]]
+    agent_name = config.get("name", name)
+    display = f"{agent_name} · {config['role']}"
     return f"""<div class="agent-card {c['card']}"><div class="card-bar {c['bar']}"></div><div class="card-body">
         <div class="card-header"><div class="card-meta"><span class="dot {c['dot']}"></span>
-        <span class="card-name {c['pn']}">{name}</span>
-        <span class="card-badge {c['badge']}">{config['role']}</span></div>
-        <span class="card-model {c['cm']}">{config['model_type'].upper()}</span></div>
+        <span class="card-name {c['pn']}">{display}</span>
+        <span class="card-badge {c['badge']}">{config['model_type'].upper()}</span></div>
+        </div>
         <p class="card-text {c['ct']}">{response.replace(chr(10),'<br>')}</p>
         </div></div>"""
 
@@ -146,6 +153,7 @@ elif st.session_state.phase == "analysis":
 
     previous_text = ""
     agent_cards_html = []
+    agent_responses_list = []
 
     for name, config in AGENTS.items():
         with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
@@ -170,16 +178,19 @@ elif st.session_state.phase == "analysis":
             card_html = render_agent_card(name, config, response)
             previous_text += f"\n{config['role']}: {response}\n"
 
+        agent_responses_list.append((config["role"], response if response != GROQ_RATE_LIMIT_MSG else "[Limit nedeniyle yanıt alınamadı]"))
         agent_cards_html.append(card_html)
         st.markdown(card_html, unsafe_allow_html=True)
 
     st.session_state.agent_cards = agent_cards_html
+    st.session_state.agent_responses = agent_responses_list
 
     st.markdown('<p class="section-title">Koordinatör Raporu</p>', unsafe_allow_html=True)
     with st.spinner("⚪ Koordinatör sonuç raporu hazırlıyor..."):
         coord_raw = asyncio.run(get_coordinator_initial(claude_client, q, previous_text))
         coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, previous_text))
 
+    st.session_state.coord_summary = coord_response
     coord_html = render_coordinator_card("Koordinatör — İlk Rapor", coord_response)
     st.markdown(coord_html, unsafe_allow_html=True)
 
@@ -208,28 +219,63 @@ elif st.session_state.phase == "chat":
             st.markdown(render_coordinator_card(label, content), unsafe_allow_html=True)
         elif msg_type == "user":
             st.markdown(f'<div class="chat-user"><div class="chat-label">SEN</div>{content}</div>', unsafe_allow_html=True)
+        elif msg_type.startswith("direct::"):
+            expert_name = msg_type.split("::")[1].capitalize()
+            role_map = {"Mert": "Planlama", "Selin": "Risk", "Burak": "Mühendis", "Ayşe": "Girişim", "Kemal": "Finans"}
+            role = role_map.get(expert_name, "")
+            color_map = {"Mert": "#9c27b0", "Selin": "#cc4444", "Burak": "#378ADD", "Ayşe": "#4caf50", "Kemal": "#ffa000"}
+            c = color_map.get(expert_name, "#4fc3f7")
+            st.markdown(f'''<div style="border-radius:10px;overflow:hidden;margin:8px 0;border:1px solid #2a2d3a;background:#13151c;">
+                <div style="height:2px;background:{c};"></div>
+                <div style="padding:12px 16px;">
+                <div style="font-size:10px;font-weight:600;color:{c};letter-spacing:1px;margin-bottom:6px;">{expert_name.upper()} · {role.upper()}</div>
+                <div style="font-size:13px;color:#ccc;line-height:1.75;">{content.replace(chr(10),"<br>")}</div>
+                </div></div>''', unsafe_allow_html=True)
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     user_input = st.text_area("Devam et — soru sor, itiraz et, detay iste:", height=80, key=f"chat_{len(st.session_state.chat_messages)}")
 
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
         if st.button("💬 Gönder"):
             if user_input.strip():
                 with st.spinner("⚪ Koordinatör yanıtlıyor..."):
-                    coord_raw = asyncio.run(get_coordinator_followup(claude_client, st.session_state.chat_history, user_input))
+                    coord_raw = asyncio.run(get_coordinator_followup(claude_client, groq_key, st.session_state.chat_history, user_input))
                 context = st.session_state.chat_history[-1]["content"] if st.session_state.chat_history else ""
                 coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, context))
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 st.session_state.chat_history.append({"role": "assistant", "content": coord_response})
+                from agents import detect_direct_address, NAME_TO_AGENT, AGENTS
+                dname, dinfo = detect_direct_address(user_input)
+                if dname and dinfo:
+                    tag = f"direct::{dname}"
+                else:
+                    tag = "coord"
                 st.session_state.chat_messages.append(("user", user_input))
-                st.session_state.chat_messages.append(("coord", coord_response))
+                st.session_state.chat_messages.append((tag, coord_response))
+                st.session_state.coord_summary = coord_response
                 st.rerun()
     with col2:
+        if st.button("📄 PDF Ver"):
+            with st.spinner("PDF hazırlanıyor..."):
+                pdf_bytes = generate_pdf(
+                    question=st.session_state.question,
+                    agent_responses=st.session_state.get("agent_responses", []),
+                    chat_messages=st.session_state.get("chat_messages", []),
+                    coord_summary=st.session_state.get("coord_summary", "")
+                )
+            st.download_button(
+                label="⬇️ İndir",
+                data=pdf_bytes,
+                file_name="koalisyon_raporu.pdf",
+                mime="application/pdf"
+            )
+    with col3:
         if st.button("🔄 Yeni Analiz"):
-            for key in ["phase","chat_history","chat_messages","agent_cards","question"]:
-                del st.session_state[key]
+            for key in ["phase","chat_history","chat_messages","agent_cards","question","agent_responses","coord_summary"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
     st.markdown('<div class="status-bar"><span class="sdot"></span>Oturum aktif · koordinatör ile tartışmaya devam edebilirsiniz</div>', unsafe_allow_html=True)
