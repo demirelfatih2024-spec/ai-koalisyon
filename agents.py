@@ -122,7 +122,8 @@ async def ask_claude(client, system_prompt: str, messages: list) -> str:
     return response.content[0].text
 
 
-async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250) -> str:
+async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250, model: str = "llama3-8b-8192") -> str:
+    await asyncio.sleep(1.5)
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -131,12 +132,27 @@ async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens
                 "Content-Type": "application/json"
             },
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": model,
                 "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system_prompt}] + messages
             },
             timeout=60.0
         )
+        if response.status_code == 429:
+            await asyncio.sleep(10)
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "system", "content": system_prompt}] + messages
+                },
+                timeout=60.0
+            )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
 
@@ -156,7 +172,7 @@ Kendi uzmanlık alanından bu konuya katkı sun. Tekrar etme, tamamla."""
     if config["model_type"] == "claude":
         return await ask_claude(claude_client, config["system"], messages)
     else:
-        return await ask_groq(groq_key, config["system"], messages)
+        return await ask_groq(groq_key, config["system"], messages, model="llama-3.3-70b-versatile")
 
 
 async def get_coordinator_initial(groq_key: str, question: str, all_responses: str) -> str:
