@@ -150,26 +150,26 @@ elif st.session_state.phase == "analysis":
     for name, config in AGENTS.items():
         with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
             response = asyncio.run(get_agent_response(claude_client, groq_key, name, config, q, previous_text))
-        previous_text += f"\n{config['role']}: {response}\n"
+
         if response == GROQ_RATE_LIMIT_MSG:
-            card_html = f"""<div style='border-radius:10px;overflow:hidden;margin-bottom:8px;border:1px solid #4a3800;background:#1f1708;'>
-                <div style='height:2px;background:#ffa000;'></div>
-                <div style='padding:12px 16px;'>
-                    <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px;'>
-                        <span style='font-size:13px;font-weight:500;color:#ffe082;'>{config['emoji']} {name}</span>
-                        <span style='font-size:10px;background:#251800;color:#ffa000;border:1px solid #503000;border-radius:5px;padding:2px 8px;'>{config['role']}</span>
-                    </div>
-                    <p style='font-size:12px;color:#ffa000;'>⚠️ Groq ücretsiz limit doldu. Bu ajan şu an yanıt veremiyor. Groq'a ücretli plan ekleyerek limiti kaldırabilirsiniz: <a href='https://console.groq.com' style='color:#ffd54f;'>console.groq.com</a></p>
-                </div>
-            </div>"""
-            previous_text += f"
-{config['role']}: [Bu ajan limit nedeniyle yanıt veremedi]
-"
+            emoji = config['emoji']
+            role = config['role']
+            card_html = (
+                "<div style='border-radius:10px;overflow:hidden;margin-bottom:8px;"
+                "border:1px solid #4a3800;background:#1f1708;'>"
+                "<div style='height:2px;background:#ffa000;'></div>"
+                "<div style='padding:12px 16px;'>"
+                f"<span style='font-size:13px;font-weight:500;color:#ffe082;'>{emoji} {name} — {role}</span><br>"
+                "<p style='font-size:12px;color:#ffa000;margin-top:6px;'>⚠️ Groq ücretsiz limit doldu. "
+                "Bu ajan yanıt veremiyor. Ücretli plan için: "
+                "<a href='https://console.groq.com' style='color:#ffd54f;'>console.groq.com</a></p>"
+                "</div></div>"
+            )
+            previous_text += f"\n{config['role']}: [limit nedeniyle yanıt veremedi]\n"
         else:
             card_html = render_agent_card(name, config, response)
-            previous_text += f"
-{config['role']}: {response}
-"
+            previous_text += f"\n{config['role']}: {response}\n"
+
         agent_cards_html.append(card_html)
         st.markdown(card_html, unsafe_allow_html=True)
 
