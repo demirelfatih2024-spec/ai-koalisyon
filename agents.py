@@ -1,6 +1,6 @@
 import asyncio
 from anthropic import AsyncAnthropic
-import google.generativeai as genai
+from google import genai
 
 # ─────────────────────────────────────────
 #  AJAN KİŞİLİKLERİ — istediğin gibi düzenle
@@ -39,8 +39,8 @@ Yanıtlarını Türkçe ver. 2-3 paragraf yaz."""
 
 def get_clients(anthropic_key: str, gemini_key: str):
     claude_client = AsyncAnthropic(api_key=anthropic_key)
-    genai.configure(api_key=gemini_key)
-    return claude_client
+    gemini_client = genai.Client(api_key=gemini_key)
+    return claude_client, gemini_client
 
 
 async def ask_claude(client, system_prompt: str, user_message: str) -> str:
@@ -53,18 +53,17 @@ async def ask_claude(client, system_prompt: str, user_message: str) -> str:
     return response.content[0].text
 
 
-async def ask_gemini(system_prompt: str, user_message: str) -> str:
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=system_prompt
-    )
+async def ask_gemini(client, system_prompt: str, user_message: str) -> str:
+    full_prompt = f"{system_prompt}\n\n{user_message}"
     response = await asyncio.to_thread(
-        model.generate_content, user_message
+        client.models.generate_content,
+        model="gemini-2.0-flash",
+        contents=full_prompt
     )
     return response.text
 
 
-async def get_agent_response(claude_client, name: str, config: dict, question: str, previous_responses: str) -> str:
+async def get_agent_response(claude_client, gemini_client, name: str, config: dict, question: str, previous_responses: str) -> str:
     if previous_responses:
         prompt = f"""Soru: {question}
 
@@ -78,4 +77,4 @@ Diğer ajanların görüşleri:
     if config["model_type"] == "claude":
         return await ask_claude(claude_client, config["system"], prompt)
     else:
-        return await ask_gemini(config["system"], prompt)
+        return await ask_gemini(gemini_client, config["system"], prompt)
