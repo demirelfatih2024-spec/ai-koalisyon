@@ -29,7 +29,7 @@ KURALLAR:
 - Türkçe yaz"""
     },
     "Claude-2": {
-        "model_type": "claude",
+        "model_type": "groq",
         "emoji": "🔵",
         "color": "blue",
         "role": "Kıdemli Mühendis",
@@ -41,7 +41,7 @@ KURALLAR:
 - Türkçe yaz"""
     },
     "Groq-1": {
-        "model_type": "groq",
+        "model_type": "claude",
         "emoji": "🟢",
         "color": "green",
         "role": "Girişim Koçu",
@@ -112,10 +112,10 @@ def get_clients(anthropic_key: str, groq_key: str):
     return claude_client, groq_key
 
 
-async def ask_claude(client, system_prompt: str, messages: list) -> str:
+async def ask_claude(client, system_prompt: str, messages: list, max_tokens: int = 250) -> str:
     response = await client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=250,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=messages
     )
@@ -123,7 +123,7 @@ async def ask_claude(client, system_prompt: str, messages: list) -> str:
 
 
 async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250, model: str = "llama3-8b-8192") -> str:
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(3)
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -139,7 +139,7 @@ async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens
             timeout=60.0
         )
         if response.status_code == 429:
-            await asyncio.sleep(10)
+            await asyncio.sleep(20)
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
@@ -172,10 +172,10 @@ Kendi uzmanlık alanından bu konuya katkı sun. Tekrar etme, tamamla."""
     if config["model_type"] == "claude":
         return await ask_claude(claude_client, config["system"], messages)
     else:
-        return await ask_groq(groq_key, config["system"], messages, model="llama-3.3-70b-versatile")
+        return await ask_groq(groq_key, config["system"], messages)
 
 
-async def get_coordinator_initial(groq_key: str, question: str, all_responses: str) -> str:
+async def get_coordinator_initial(claude_client, question: str, all_responses: str) -> str:
     prompt = f"""Kullanıcının sorusu: {question}
 
 Uzman ekibin görüşleri:
@@ -183,16 +183,16 @@ Uzman ekibin görüşleri:
 
 Şimdi bu görüşleri değerlendir, eksik varsa ilgili uzmana sor ve cevabını ver, sonra kullanıcıya özet rapor sun."""
     messages = [{"role": "user", "content": prompt}]
-    return await ask_groq(groq_key, COORDINATOR_SYSTEM, messages, max_tokens=900)
+    return await ask_claude(claude_client, COORDINATOR_SYSTEM, messages, max_tokens=900)
 
 
-async def get_coordinator_followup(groq_key: str, chat_history: list, user_message: str) -> str:
+async def get_coordinator_followup(claude_client, chat_history: list, user_message: str) -> str:
     if len(chat_history) > 5:
         trimmed = chat_history[:1] + chat_history[-4:]
     else:
         trimmed = chat_history
     history = trimmed + [{"role": "user", "content": user_message}]
-    return await ask_groq(groq_key, COORDINATOR_SYSTEM, history, max_tokens=600)
+    return await ask_claude(claude_client, COORDINATOR_SYSTEM, history, max_tokens=600)
 
 
 EXPERT_NAME_MAP = {
