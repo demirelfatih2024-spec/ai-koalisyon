@@ -69,21 +69,39 @@ KURALLAR:
 COORDINATOR_SYSTEM = """Sen bir girişim danışmanlık masasının koordinatörüsün.
 Uzman ekibin: Planlama Uzmanı, Risk Analisti, Kıdemli Mühendis, Girişim Koçu, Finans Uzmanı.
 
-GÖREVIN:
-- Kullanıcının sorusuna göre en alakalı 1-2 uzmanı devreye sok
-- O uzmanın görüşünü kendin yaz, onun ağzından kısaca konuş
-- Sonunda kullanıcıya 3-5 maddelik net özet ver
-- Kullanıcı ikna olmadıysa tartışmaya devam et
-- Herkes hemfikirse sona "✅ SONUÇ:" ile bitir
+ÇALIŞMA MANTIĞIN:
+Kullanıcı veya sen net olmayan bir nokta görürsen, ilgili uzmana şu formatta soru sorarsın:
+UZMAN_SORU::RiskAnalisti::Bu sektörde sermaye kaybı riski nedir?
 
-FORMAT:
-[Uzman Adı]: görüş (max 2 cümle)
-[Koordinatör]: özet veya soru
+Uzman cevapladıktan sonra tartışmaya devam edersin.
+Net olmayan nokta yoksa direkt rapor ver.
 
-KATI KURALLAR:
-- Toplam yanıt max 150 kelime
-- Madde işareti kullan, uzun paragraf yazma
-- Gereksiz giriş ve kapanış cümlesi yazma
+İLK RAPOR FORMATI:
+[Planlama Uzmanı]: 2 cümle görüş
+[Risk Analisti]: 2 cümle görüş  
+[Kıdemli Mühendis]: 2 cümle görüş
+[Girişim Koçu]: 2 cümle görüş
+[Finans Uzmanı]: 2 cümle görüş
+
+RAPOR:
+- Karar: Yapılmalı mı?
+- Ürün/Niş: Ne satılmalı
+- Platform: Nerede
+- Başlangıç Maliyeti: TL olarak
+- Finansman: Nasıl
+- Kar Süresi: Kaç ay
+- Ana Risk: En kritik
+- İlk Adım: Bu hafta ne yapılmalı
+
+TAKİP SORULARI:
+- Kullanıcı soru sorarsa önce hangi uzmanın bileceğini düşün
+- UZMAN_SORU::UzmanAdı::soru formatıyla sor, cevabı bekle
+- Sonra kullanıcıya net yanıt ver
+- Herkes hemfikirse "✅ SONUÇ:" ile bitir
+
+KURALLAR:
+- Her blok max 2-3 cümle
+- Gereksiz giriş/kapanış yazma
 - Türkçe yaz"""
 
 AGENT_SYSTEM_MAP = {cfg["role"]: cfg["system"] for cfg in AGENTS.values()}
@@ -149,9 +167,68 @@ Uzman ekibin görüşleri:
 
 Şimdi bu görüşleri değerlendir, eksik varsa ilgili uzmana sor ve cevabını ver, sonra kullanıcıya özet rapor sun."""
     messages = [{"role": "user", "content": prompt}]
-    return await ask_groq(groq_key, COORDINATOR_SYSTEM, messages, max_tokens=700)
+    return await ask_groq(groq_key, COORDINATOR_SYSTEM, messages, max_tokens=900)
 
 
 async def get_coordinator_followup(groq_key: str, chat_history: list, user_message: str) -> str:
     history = chat_history + [{"role": "user", "content": user_message}]
-    return await ask_groq(groq_key, COORDINATOR_SYSTEM, history, max_tokens=700)
+    return await ask_groq(groq_key, COORDINATOR_SYSTEM, history, max_tokens=900)
+
+
+EXPERT_NAME_MAP = {
+    "PlanlamaUzmanı": "Groq-0",
+    "Planlama": "Groq-0",
+    "RiskAnalisti": "Claude-1",
+    "Risk": "Claude-1",
+    "KıdemliMühendis": "Claude-2",
+    "Mühendis": "Claude-2",
+    "GirişimKoçu": "Groq-1",
+    "Girişim": "Groq-1",
+    "FinansUzmanı": "Groq-2",
+    "Finans": "Groq-2",
+}
+
+
+async def ask_specific_expert(claude_client, groq_key: str, expert_key: str, question: str, context: str) -> str:
+    # İsim eşleştir
+    agent_name = None
+    for key, name in EXPERT_NAME_MAP.items():
+        if key.lower() in expert_key.lower().replace(" ", ""):
+            agent_name = name
+            break
+
+    if not agent_name or agent_name not in AGENTS:
+        return f"Uzman bulunamadı: {expert_key}"
+
+    config = AGENTS[agent_name]
+    prompt = f"""Bağlam: {context}
+
+Koordinatör sana şunu soruyor: {question}
+
+Kendi uzmanlık alanından kısa ve net yanıt ver (max 3 cümle)."""
+
+    if config["model_type"] == "claude":
+        return await ask_claude(claude_client, config["system"], [{"role": "user", "content": prompt}])
+    else:
+        return await ask_groq(groq_key, config["system"], [{"role": "user", "content": prompt}])
+
+
+async def process_coordinator_response(claude_client, groq_key: str, response: str, context: str) -> str:
+    """Koordinatör UZMAN_SORU:: formatı kullandıysa uzmanı çağır ve cevabı ekle"""
+    import re
+    pattern = r'UZMAN_SORU::([^:]+)::(.+?)(?:\n|$)'
+    matches = re.findall(pattern, response)
+
+    if not matches:
+        return response
+
+    enriched = response
+    for expert_key, question in matches:
+        expert_response = await ask_specific_expert(claude_client, groq_key, expert_key.strip(), question.strip(), context)
+        expert_name = expert_key.strip()
+        enriched = enriched.replace(
+            f"UZMAN_SORU::{expert_key}::{question}",
+            f"\n[{expert_name} yanıtlıyor]: {expert_response}"
+        )
+
+    return enriched
