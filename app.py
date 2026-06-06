@@ -1,6 +1,6 @@
 import streamlit as st
 import asyncio
-from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response
+from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response, GROQ_RATE_LIMIT_MSG
 
 st.set_page_config(page_title="AI Koalisyonu", page_icon="🤖", layout="centered")
 
@@ -151,7 +151,25 @@ elif st.session_state.phase == "analysis":
         with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
             response = asyncio.run(get_agent_response(claude_client, groq_key, name, config, q, previous_text))
         previous_text += f"\n{config['role']}: {response}\n"
-        card_html = render_agent_card(name, config, response)
+        if response == GROQ_RATE_LIMIT_MSG:
+            card_html = f"""<div style='border-radius:10px;overflow:hidden;margin-bottom:8px;border:1px solid #4a3800;background:#1f1708;'>
+                <div style='height:2px;background:#ffa000;'></div>
+                <div style='padding:12px 16px;'>
+                    <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px;'>
+                        <span style='font-size:13px;font-weight:500;color:#ffe082;'>{config['emoji']} {name}</span>
+                        <span style='font-size:10px;background:#251800;color:#ffa000;border:1px solid #503000;border-radius:5px;padding:2px 8px;'>{config['role']}</span>
+                    </div>
+                    <p style='font-size:12px;color:#ffa000;'>⚠️ Groq ücretsiz limit doldu. Bu ajan şu an yanıt veremiyor. Groq'a ücretli plan ekleyerek limiti kaldırabilirsiniz: <a href='https://console.groq.com' style='color:#ffd54f;'>console.groq.com</a></p>
+                </div>
+            </div>"""
+            previous_text += f"
+{config['role']}: [Bu ajan limit nedeniyle yanıt veremedi]
+"
+        else:
+            card_html = render_agent_card(name, config, response)
+            previous_text += f"
+{config['role']}: {response}
+"
         agent_cards_html.append(card_html)
         st.markdown(card_html, unsafe_allow_html=True)
 
@@ -159,7 +177,7 @@ elif st.session_state.phase == "analysis":
 
     st.markdown('<p class="section-title">Koordinatör Raporu</p>', unsafe_allow_html=True)
     with st.spinner("⚪ Koordinatör sonuç raporu hazırlıyor..."):
-        coord_raw = asyncio.run(get_coordinator_initial(groq_key, q, previous_text))
+        coord_raw = asyncio.run(get_coordinator_initial(claude_client, q, previous_text))
         coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, previous_text))
 
     coord_html = render_coordinator_card("Koordinatör — İlk Rapor", coord_response)
@@ -200,7 +218,7 @@ elif st.session_state.phase == "chat":
         if st.button("💬 Gönder"):
             if user_input.strip():
                 with st.spinner("⚪ Koordinatör yanıtlıyor..."):
-                    coord_raw = asyncio.run(get_coordinator_followup(groq_key, st.session_state.chat_history, user_input))
+                    coord_raw = asyncio.run(get_coordinator_followup(claude_client, st.session_state.chat_history, user_input))
                 context = st.session_state.chat_history[-1]["content"] if st.session_state.chat_history else ""
                 coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, context))
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
