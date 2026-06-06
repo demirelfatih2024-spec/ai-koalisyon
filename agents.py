@@ -122,24 +122,12 @@ async def ask_claude(client, system_prompt: str, messages: list, max_tokens: int
     return response.content[0].text
 
 
-async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250, model: str = "llama3-8b-8192") -> str:
-    await asyncio.sleep(3)
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "system", "content": system_prompt}] + messages
-            },
-            timeout=60.0
-        )
-        if response.status_code == 429:
-            await asyncio.sleep(20)
+GROQ_RATE_LIMIT_MSG = "__GROQ_LIMIT__"
+
+async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250, model: str = "llama-3.1-8b-instant") -> str:
+    await asyncio.sleep(2)
+    try:
+        async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
@@ -153,8 +141,12 @@ async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens
                 },
                 timeout=60.0
             )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+            if response.status_code == 429:
+                return GROQ_RATE_LIMIT_MSG
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+    except Exception:
+        return GROQ_RATE_LIMIT_MSG
 
 
 async def get_agent_response(claude_client, groq_key, name: str, config: dict, question: str, previous_responses: str) -> str:
