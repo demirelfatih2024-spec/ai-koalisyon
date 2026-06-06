@@ -2,37 +2,72 @@ import asyncio
 from anthropic import AsyncAnthropic
 import httpx
 
-# ─────────────────────────────────────────
-#  AJAN KİŞİLİKLERİ — istediğin gibi düzenle
-# ─────────────────────────────────────────
+# Sıralama önemli — Planlama Uzmanı ilk konuşur, diğerleri ona göre katkı sunar
 AGENTS = {
+    "Groq-0": {
+        "model_type": "groq",
+        "emoji": "🟣",
+        "color": "purple",
+        "role": "Planlama Uzmanı",
+        "system": """Sen stratejik planlama uzmanısın. Konuyu analiz edip net bir çerçeve çizersin.
+KURALLAR:
+- Maksimum 3-4 cümle, fazlası yasak
+- Konuyu aşamalara veya boyutlara böl
+- Diğer uzmanların hangi konulara odaklanması gerektiğini belirt
+- Gereksiz giriş ve kapanış cümlesi yazma
+- Türkçe yaz"""
+    },
     "Claude-1": {
         "model_type": "claude",
-        "emoji": "🔵",
-        "system": """Sen karamsar ve eleştirel bir düşünürsün. 
-Her konunun tehlikeli, riskli ve olumsuz yönlerini ön plana çıkarırsın.
-Yanıtlarını Türkçe ver. Kısa cevaplar ver."""
+        "emoji": "🔴",
+        "color": "red",
+        "role": "Risk Analisti",
+        "system": """Sen deneyimli bir risk analiz uzmanısın.
+KURALLAR:
+- Maksimum 3-4 cümle, fazlası yasak
+- Planlama uzmanının çerçevesindeki risk boyutunu ele al
+- Somut risk senaryoları sun, olasılık ve etki büyüklüğünden bahset
+- Gereksiz giriş ve kapanış cümlesi yazma
+- Türkçe yaz"""
     },
     "Claude-2": {
         "model_type": "claude",
-        "emoji": "🟢",
-        "system": """Sen analitik ve rasyonel bir düşünürsün.
-Sadece veriye, mantığa ve kanıta dayalı değerlendirme yaparsın. Duyguya yer yok.
-Yanıtlarını Türkçe ver.  Kısa cevaplar ver."""
+        "emoji": "🔵",
+        "color": "blue",
+        "role": "Kıdemli Mühendis",
+        "system": """Sen 15+ yıl deneyimli üst düzey bir mühendissin.
+KURALLAR:
+- Maksimum 3-4 cümle, fazlası yasak
+- Planlama uzmanının çerçevesindeki teknik boyutu ele al
+- Mimari, sistem tasarımı, teknik altyapı konularında somut görüş ver
+- Gereksiz giriş ve kapanış cümlesi yazma
+- Türkçe yaz"""
     },
     "Groq-1": {
         "model_type": "groq",
-        "emoji": "🟡",
-        "system": """Sen iyimser ve çözüm odaklı bir düşünürsün.
-Her problemde fırsat ararsın, olumlu senaryoları vurgularsın.
-Yanıtlarını Türkçe ver. Kısa cevaplar ver."""
+        "emoji": "🟢",
+        "color": "green",
+        "role": "Girişim Koçu",
+        "system": """Sen pratik odaklı bir girişim koçusun.
+KURALLAR:
+- Maksimum 3-4 cümle, fazlası yasak
+- Planlama uzmanının çerçevesine göre somut ilk adımı öner
+- "Bu hafta şunu yap" düzeyinde eyleme geçirici konuş
+- Gereksiz giriş ve kapanış cümlesi yazma
+- Türkçe yaz"""
     },
     "Groq-2": {
         "model_type": "groq",
-        "emoji": "🔴",
-        "system": """Sen pragmatik ve pratik bir düşünürsün.
-Teoriden değil, gerçek hayattan ve uygulanabilirlikten bahsedersin.
-Yanıtlarını Türkçe ver. Kısa cevaplar ver."""
+        "emoji": "🟡",
+        "color": "amber",
+        "role": "Finans Uzmanı",
+        "system": """Sen muhasebe ve kurumsal finans uzmanısın.
+KURALLAR:
+- Maksimum 3-4 cümle, fazlası yasak
+- Planlama uzmanının çerçevesindeki finansal boyutu ele al
+- Nakit akışı, karlılık, geri dönüş süresi gibi somut metrikler ver
+- Gereksiz giriş ve kapanış cümlesi yazma
+- Türkçe yaz"""
     },
 }
 
@@ -45,7 +80,7 @@ def get_clients(anthropic_key: str, groq_key: str):
 async def ask_claude(client, system_prompt: str, user_message: str) -> str:
     response = await client.messages.create(
         model="claude-haiku-4-5",
-        max_tokens=600,
+        max_tokens=200,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}]
     )
@@ -62,7 +97,7 @@ async def ask_groq(groq_key: str, system_prompt: str, user_message: str) -> str:
             },
             json={
                 "model": "llama-3.3-70b-versatile",
-                "max_tokens": 600,
+                "max_tokens": 200,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
@@ -75,15 +110,17 @@ async def ask_groq(groq_key: str, system_prompt: str, user_message: str) -> str:
 
 
 async def get_agent_response(claude_client, groq_key, name: str, config: dict, question: str, previous_responses: str) -> str:
-    if previous_responses:
-        prompt = f"""Soru: {question}
+    if not previous_responses:
+        # İlk konuşan: Planlama Uzmanı — sadece konuyu çerçevele
+        prompt = f"Konu: {question}\n\nBu konuyu analiz et ve diğer uzmanlara çerçeve çiz."
+    else:
+        # Diğerleri: Planlama uzmanının çerçevesine göre kendi uzmanlık alanından katkı sun
+        prompt = f"""Konu: {question}
 
-Diğer ajanların görüşleri:
+Ekibin şimdiye kadar söyledikleri:
 {previous_responses}
 
-Şimdi sen kendi perspektifinden bu tartışmaya katıl. Diğerlerine katılıp katılmadığını da belirt."""
-    else:
-        prompt = f"Soru: {question}"
+Kendi uzmanlık alanından bu konuya katkı sun. Tekrar etme, tamamla."""
 
     if config["model_type"] == "claude":
         return await ask_claude(claude_client, config["system"], prompt)
