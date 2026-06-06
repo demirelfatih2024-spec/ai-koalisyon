@@ -256,47 +256,56 @@ Kendi karakterin ve uzmanlığın çerçevesinde, kişisel ve samimi şekilde ya
     return await ask_claude(claude_client, COORDINATOR_SYSTEM, history, max_tokens=600)
 
 
-EXPERT_NAME_MAP = {
-    "PlanlamaUzmanı": "Groq-0",
-    "Planlama": "Groq-0",
-    "RiskAnalisti": "Claude-1",
-    "Risk": "Claude-1",
-    "KıdemliMühendis": "Claude-2",
-    "Mühendis": "Claude-2",
-    "GirişimKoçu": "Groq-1",
-    "Girişim": "Groq-1",
-    "FinansUzmanı": "Groq-2",
-    "Finans": "Groq-2",
+# İsim → ajan eşleştirmesi
+NAME_AGENT_MAP = {
+    "mert":  "Groq-0",
+    "selin": "Claude-1",
+    "burak": "Claude-2",
+    "ayşe":  "Groq-1",
+    "ayse":  "Groq-1",
+    "kemal": "Groq-2",
+    "planlama": "Groq-0",
+    "risk": "Claude-1",
+    "mühendis": "Claude-2",
+    "muhendis": "Claude-2",
+    "girişim": "Groq-1",
+    "girisim": "Groq-1",
+    "finans": "Groq-2",
 }
 
 
 async def ask_specific_expert(claude_client, groq_key: str, expert_key: str, question: str, context: str) -> str:
-    # İsim eşleştir
-    agent_name = None
-    for key, name in EXPERT_NAME_MAP.items():
-        if key.lower() in expert_key.lower().replace(" ", ""):
-            agent_name = name
-            break
+    key = expert_key.lower().strip().replace(" ", "")
+    agent_name = NAME_AGENT_MAP.get(key)
+
+    # Tam eşleşme yoksa kısmi ara
+    if not agent_name:
+        for k, v in NAME_AGENT_MAP.items():
+            if k in key or key in k:
+                agent_name = v
+                break
 
     if not agent_name or agent_name not in AGENTS:
-        return f"Uzman bulunamadı: {expert_key}"
+        # Fallback: koordinatör kendisi cevap versin
+        return f"[Koordinatör notu: {expert_key} ile ilgili — {question}]"
 
     config = AGENTS[agent_name]
-    prompt = f"""Bağlam: {context}
+    prompt = f"""Bağlam:
+{context[:500]}
 
-Koordinatör sana şunu soruyor: {question}
+Koordinatör sana soruyor: {question}
 
-Kendi uzmanlık alanından kısa ve net yanıt ver (max 3 cümle)."""
+Kendi kişiliğin ve uzmanlığın çerçevesinde kısa ve net yanıt ver (max 3 cümle)."""
 
+    messages = [{"role": "user", "content": prompt}]
     if config["model_type"] == "claude":
-        return await ask_claude(claude_client, config["system"], [{"role": "user", "content": prompt}])
+        return await ask_claude(claude_client, config["system"], messages)
     else:
-        return await ask_groq(groq_key, config["system"], [{"role": "user", "content": prompt}])
+        return await ask_groq(groq_key, config["system"], messages)
 
 
 async def process_coordinator_response(claude_client, groq_key: str, response: str, context: str) -> str:
-    """Koordinatör UZMAN_SORU:: formatı kullandıysa uzmanı çağır ve cevabı ekle"""
-    import re
+    """Koordinatör UZMAN_SORU:: formatı kullandıysa uzmanı çağır"""
     pattern = r'UZMAN_SORU::([^:]+)::(.+?)(?:\n|$)'
     matches = re.findall(pattern, response)
 
@@ -306,10 +315,9 @@ async def process_coordinator_response(claude_client, groq_key: str, response: s
     enriched = response
     for expert_key, question in matches:
         expert_response = await ask_specific_expert(claude_client, groq_key, expert_key.strip(), question.strip(), context)
-        expert_name = expert_key.strip()
         enriched = enriched.replace(
             f"UZMAN_SORU::{expert_key}::{question}",
-            f"\n[{expert_name} yanıtlıyor]: {expert_response}"
+            f"\n[{expert_key.strip()} yanıtlıyor]: {expert_response}"
         )
 
     return enriched
