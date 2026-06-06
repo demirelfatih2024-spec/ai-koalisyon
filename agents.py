@@ -171,8 +171,12 @@ Uzman ekibin görüşleri:
 
 
 async def get_coordinator_followup(groq_key: str, chat_history: list, user_message: str) -> str:
-    history = chat_history + [{"role": "user", "content": user_message}]
-    return await ask_groq(groq_key, COORDINATOR_SYSTEM, history, max_tokens=900)
+    if len(chat_history) > 5:
+        trimmed = chat_history[:1] + chat_history[-4:]
+    else:
+        trimmed = chat_history
+    history = trimmed + [{"role": "user", "content": user_message}]
+    return await ask_groq(groq_key, COORDINATOR_SYSTEM, history, max_tokens=600)
 
 
 EXPERT_NAME_MAP = {
