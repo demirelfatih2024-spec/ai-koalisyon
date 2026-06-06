@@ -1,20 +1,17 @@
 import streamlit as st
 import asyncio
-from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients
+from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response
 
 st.set_page_config(page_title="AI Koalisyonu", page_icon="🤖", layout="centered")
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0f1117; color: #e8e8e8; }
 .stApp { background-color: #0f1117; }
-
 .app-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:500; letter-spacing:1.5px; text-transform:uppercase; background:#1a2332; color:#4fc3f7; border:1px solid #1e3a5f; border-radius:6px; padding:4px 10px; margin-bottom:12px; }
 .app-title { font-size:26px; font-weight:600; color:#fff; margin-bottom:6px; }
 .app-sub { font-size:13px; color:#888; margin-bottom:1.5rem; }
-
 .agents-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-bottom:1.5rem; }
 .agent-pill { border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:3px; border:1px solid transparent; }
 .pill-purple{background:#150f1f;border-color:#3a1f5f;} .pill-red{background:#1f1215;border-color:#4a1b1b;}
@@ -29,12 +26,9 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color:
 .dot{width:6px;height:6px;border-radius:50%;}
 .dot-purple{background:#9c27b0;} .dot-red{background:#c44;} .dot-blue{background:#378ADD;}
 .dot-green{background:#4caf50;} .dot-amber{background:#ffa000;} .dot-white{background:#666;}
-
 .stTextArea textarea { background-color:#161b27!important; color:#e8e8e8!important; border:1px solid #2a3a50!important; border-radius:10px!important; font-size:14px!important; }
 .stButton > button { background:#378ADD!important; color:#fff!important; font-weight:500!important; border:none!important; border-radius:8px!important; padding:10px 24px!important; width:100%!important; }
-
 .debate-q { font-size:12px; font-family:'JetBrains Mono',monospace; color:#4fc3f7; background:#0d1a2e; border:1px solid #1e3a5f; border-radius:8px; padding:10px 14px; margin-bottom:1rem; }
-
 .agent-card { border-radius:10px; overflow:hidden; margin-bottom:8px; border:1px solid transparent; }
 .card-purple{background:#120a1f;border-color:#2a1050;} .card-red{background:#1a0f0f;border-color:#3a1515;}
 .card-blue{background:#0a1525;border-color:#1a3055;} .card-green{background:#0a1a0d;border-color:#153520;}
@@ -59,17 +53,15 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color:
 .card-text{font-size:13px;line-height:1.75;}
 .ct-purple{color:#c0a0d0;} .ct-red{color:#d4a0a0;} .ct-blue{color:#9ab8d8;}
 .ct-green{color:#90c090;} .ct-amber{color:#d4b870;} .ct-white{color:#aaa;}
-
 .coordinator-card { border-radius:12px; overflow:hidden; margin:1rem 0; border:2px solid #2a2d3a; background:#0d0f14; }
 .coordinator-header { background:#13151c; padding:12px 16px; display:flex; align-items:center; gap:10px; border-bottom:1px solid #2a2d3a; }
 .coordinator-title { font-size:14px; font-weight:600; color:#e0e0e0; }
 .coordinator-sub { font-size:11px; color:#666; margin-left:auto; }
 .coordinator-body { padding:16px; }
 .coordinator-text { font-size:13px; line-height:1.85; color:#bbb; white-space:pre-wrap; }
-
 .chat-user { background:#0d1a2e; border:1px solid #1e3a5f; border-radius:10px; padding:10px 14px; margin:8px 0; font-size:13px; color:#90caf9; }
 .chat-label { font-size:10px; color:#4fc3f7; font-family:'JetBrains Mono',monospace; margin-bottom:4px; }
-
+.section-title { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#555; font-family:'JetBrains Mono',monospace; margin:1.2rem 0 0.6rem; }
 .divider{border:none;border-top:1px solid #1e2535;margin:1rem 0;}
 .status-bar{display:flex;align-items:center;gap:6px;font-size:11px;color:#555;margin-top:1rem;}
 .sdot{width:5px;height:5px;border-radius:50%;background:#4caf50;}
@@ -94,31 +86,48 @@ except KeyError as e:
 
 claude_client, groq_key = get_clients(ANTHROPIC_KEY, GROQ_KEY)
 
-# Session state
 if "phase" not in st.session_state:
-    st.session_state.phase = "input"  # input → analysis → chat
+    st.session_state.phase = "input"
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "messages_display" not in st.session_state:
-    st.session_state.messages_display = []
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+if "agent_cards" not in st.session_state:
+    st.session_state.agent_cards = []
 if "question" not in st.session_state:
     st.session_state.question = ""
+
+def render_agent_card(name, config, response):
+    c = COLOR_CONFIG[config["color"]]
+    return f"""<div class="agent-card {c['card']}"><div class="card-bar {c['bar']}"></div><div class="card-body">
+        <div class="card-header"><div class="card-meta"><span class="dot {c['dot']}"></span>
+        <span class="card-name {c['pn']}">{name}</span>
+        <span class="card-badge {c['badge']}">{config['role']}</span></div>
+        <span class="card-model {c['cm']}">{config['model_type'].upper()}</span></div>
+        <p class="card-text {c['ct']}">{response.replace(chr(10),'<br>')}</p>
+        </div></div>"""
+
+def render_coordinator_card(title, content):
+    return f"""<div class="coordinator-card"><div class="coordinator-header">
+        <span style="font-size:16px">⚪</span>
+        <span class="coordinator-title">{title}</span>
+        <span class="coordinator-sub">GROQ</span></div>
+        <div class="coordinator-body"><div class="coordinator-text">{content.replace(chr(10),'<br>')}</div>
+        </div></div>"""
 
 # Header
 st.markdown('<div class="app-badge">⚡ AI Coalition System</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-title">Koalisyon Danışma Paneli</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-sub">6 uzman ajan girişim fikrinizi analiz eder — koordinatör ile interaktif tartışma yapabilirsiniz.</div>', unsafe_allow_html=True)
 
-# Ajan grid
 grid_html = '<div class="agents-grid">'
 for name, cfg in AGENTS.items():
     c = COLOR_CONFIG[cfg["color"]]
     grid_html += f'<div class="agent-pill {c["pill"]}"><div class="pill-top"><span class="pill-name {c["pn"]}">{cfg["emoji"]} {cfg["role"]}</span><span class="dot {c["dot"]}"></span></div><span class="pill-model {c["pm"]}">{cfg["model_type"]}</span></div>'
-grid_html += '<div class="agent-pill pill-white"><div class="pill-top"><span class="pill-name pn-white">⚪ Koordinatör</span><span class="dot dot-white"></span></div><span class="pill-model pm-white">groq · canlı</span></div>'
-grid_html += '</div>'
+grid_html += '<div class="agent-pill pill-white"><div class="pill-top"><span class="pill-name pn-white">⚪ Koordinatör</span><span class="dot dot-white"></span></div><span class="pill-model pm-white">groq · canlı</span></div></div>'
 st.markdown(grid_html, unsafe_allow_html=True)
 
-# INPUT PHASE
+# INPUT
 if st.session_state.phase == "input":
     question = st.text_area("", placeholder="Örnek: Türkiye'de organik bebek maması e-ticaret işi kurmak istiyorum.", height=100)
     if st.button("⚡ Analizi Başlat"):
@@ -129,75 +138,80 @@ if st.session_state.phase == "input":
         else:
             st.warning("Lütfen bir soru girin.")
 
-# ANALYSIS PHASE
+# ANALYSIS
 elif st.session_state.phase == "analysis":
     q = st.session_state.question
     st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Uzman Görüşleri</p>', unsafe_allow_html=True)
 
     previous_text = ""
+    agent_cards_html = []
+
     for name, config in AGENTS.items():
-        c = COLOR_CONFIG[config["color"]]
         with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
             response = asyncio.run(get_agent_response(claude_client, groq_key, name, config, q, previous_text))
         previous_text += f"\n{config['role']}: {response}\n"
-        st.markdown(f"""<div class="agent-card {c['card']}"><div class="card-bar {c['bar']}"></div><div class="card-body">
-            <div class="card-header"><div class="card-meta"><span class="dot {c['dot']}"></span><span class="card-name {c['pn']}">{name}</span><span class="card-badge {c['badge']}">{config['role']}</span></div><span class="card-model {c['cm']}">{config['model_type'].upper()}</span></div>
-            <p class="card-text {c['ct']}">{response.replace(chr(10),'<br>')}</p></div></div>""", unsafe_allow_html=True)
+        card_html = render_agent_card(name, config, response)
+        agent_cards_html.append(card_html)
+        st.markdown(card_html, unsafe_allow_html=True)
 
+    st.session_state.agent_cards = agent_cards_html
+
+    st.markdown('<p class="section-title">Koordinatör Raporu</p>', unsafe_allow_html=True)
     with st.spinner("⚪ Koordinatör sonuç raporu hazırlıyor..."):
-        coord_response = asyncio.run(get_coordinator_initial(groq_key, q, previous_text))
+        coord_raw = asyncio.run(get_coordinator_initial(groq_key, q, previous_text))
+        coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, previous_text))
 
-    st.markdown(f"""<div class="coordinator-card"><div class="coordinator-header"><span style="font-size:16px">⚪</span><span class="coordinator-title">Koordinatör — İlk Rapor</span><span class="coordinator-sub">GROQ · özet</span></div>
-        <div class="coordinator-body"><div class="coordinator-text">{coord_response.replace(chr(10),'<br>')}</div></div></div>""", unsafe_allow_html=True)
+    coord_html = render_coordinator_card("Koordinatör — İlk Rapor", coord_response)
+    st.markdown(coord_html, unsafe_allow_html=True)
 
-    # Sohbet geçmişine ekle
     st.session_state.chat_history = [
-        {"role": "assistant", "content": f"Uzman analizi tamamlandı.\n\nUzmanların görüşleri:\n{previous_text}\n\nKoordinatör özeti:\n{coord_response}"}
+        {"role": "assistant", "content": f"Uzman görüşleri:\n{previous_text}\n\nKoordinatör raporu:\n{coord_response}"}
     ]
-    st.session_state.messages_display = [("coord_initial", coord_response)]
+    st.session_state.chat_messages = [("coord_initial", coord_response)]
     st.session_state.phase = "chat"
     st.rerun()
 
-# CHAT PHASE
+# CHAT
 elif st.session_state.phase == "chat":
     q = st.session_state.question
     st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-    # Geçmiş mesajları göster
-    for msg_type, content in st.session_state.messages_display:
-        if msg_type == "coord_initial" or msg_type == "coord":
+    # Uzman kartları her zaman göster
+    st.markdown('<p class="section-title">Uzman Görüşleri</p>', unsafe_allow_html=True)
+    for card_html in st.session_state.agent_cards:
+        st.markdown(card_html, unsafe_allow_html=True)
+
+    st.markdown('<p class="section-title">Koordinatör & Tartışma</p>', unsafe_allow_html=True)
+
+    for msg_type, content in st.session_state.chat_messages:
+        if msg_type in ("coord_initial", "coord"):
             label = "Koordinatör — İlk Rapor" if msg_type == "coord_initial" else "Koordinatör"
-            st.markdown(f"""<div class="coordinator-card"><div class="coordinator-header"><span style="font-size:16px">⚪</span><span class="coordinator-title">{label}</span><span class="coordinator-sub">GROQ</span></div>
-                <div class="coordinator-body"><div class="coordinator-text">{content.replace(chr(10),'<br>')}</div></div></div>""", unsafe_allow_html=True)
+            st.markdown(render_coordinator_card(label, content), unsafe_allow_html=True)
         elif msg_type == "user":
             st.markdown(f'<div class="chat-user"><div class="chat-label">SEN</div>{content}</div>', unsafe_allow_html=True)
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-    # Kullanıcı girişi
-    user_input = st.text_area("Devam et — soru sor, itiraz et, detay iste:", height=80, key=f"chat_{len(st.session_state.messages_display)}")
+    user_input = st.text_area("Devam et — soru sor, itiraz et, detay iste:", height=80, key=f"chat_{len(st.session_state.chat_messages)}")
 
     col1, col2 = st.columns([3, 1])
     with col1:
         if st.button("💬 Gönder"):
             if user_input.strip():
                 with st.spinner("⚪ Koordinatör yanıtlıyor..."):
-                    coord_response = asyncio.run(
-                        get_coordinator_followup(groq_key, st.session_state.chat_history, user_input)
-                    )
+                    coord_raw = asyncio.run(get_coordinator_followup(groq_key, st.session_state.chat_history, user_input))
+                context = st.session_state.chat_history[-1]["content"] if st.session_state.chat_history else ""
+                coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, context))
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 st.session_state.chat_history.append({"role": "assistant", "content": coord_response})
-                st.session_state.messages_display.append(("user", user_input))
-                st.session_state.messages_display.append(("coord", coord_response))
+                st.session_state.chat_messages.append(("user", user_input))
+                st.session_state.chat_messages.append(("coord", coord_response))
                 st.rerun()
     with col2:
         if st.button("🔄 Yeni Analiz"):
-            st.session_state.phase = "input"
-            st.session_state.chat_history = []
-            st.session_state.messages_display = []
-            st.session_state.question = ""
+            for key in ["phase","chat_history","chat_messages","agent_cards","question"]:
+                del st.session_state[key]
             st.rerun()
 
     st.markdown('<div class="status-bar"><span class="sdot"></span>Oturum aktif · koordinatör ile tartışmaya devam edebilirsiniz</div>', unsafe_allow_html=True)
