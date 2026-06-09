@@ -1,281 +1,435 @@
 import streamlit as st
 import asyncio
-from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response, GROQ_RATE_LIMIT_MSG
-from pdf_report import generate_pdf
+import json
+import base64
+import requests
+from datetime import datetime
 
-st.set_page_config(page_title="AI Koalisyonu", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="Trading Kontrol Paneli", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0f1117; color: #e8e8e8; }
 .stApp { background-color: #0f1117; }
-.app-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:500; letter-spacing:1.5px; text-transform:uppercase; background:#1a2332; color:#4fc3f7; border:1px solid #1e3a5f; border-radius:6px; padding:4px 10px; margin-bottom:12px; }
-.app-title { font-size:26px; font-weight:600; color:#fff; margin-bottom:6px; }
-.app-sub { font-size:13px; color:#888; margin-bottom:1.5rem; }
-.agents-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-bottom:1.5rem; }
-.agent-pill { border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:3px; border:1px solid transparent; }
-.pill-purple{background:#150f1f;border-color:#3a1f5f;} .pill-red{background:#1f1215;border-color:#4a1b1b;}
-.pill-blue{background:#0d1a2e;border-color:#1e3a5f;} .pill-green{background:#0d1f12;border-color:#1a4020;}
-.pill-amber{background:#1f1708;border-color:#4a3800;} .pill-white{background:#1a1c22;border-color:#3a3d4a;}
-.pill-top{display:flex;align-items:center;justify-content:space-between;}
-.pill-name{font-size:10px;font-weight:500;} .pill-model{font-size:9px;font-family:'JetBrains Mono',monospace;margin-top:2px;}
-.pn-purple{color:#ce93d8;} .pn-red{color:#ef9a9a;} .pn-blue{color:#90caf9;}
-.pn-green{color:#a5d6a7;} .pn-amber{color:#ffe082;} .pn-white{color:#ccc;}
-.pm-purple{color:#4a1f6a;} .pm-red{color:#7a3030;} .pm-blue{color:#1e4a80;}
-.pm-green{color:#1a5c20;} .pm-amber{color:#5c4000;} .pm-white{color:#444;}
-.dot{width:6px;height:6px;border-radius:50%;}
-.dot-purple{background:#9c27b0;} .dot-red{background:#c44;} .dot-blue{background:#378ADD;}
-.dot-green{background:#4caf50;} .dot-amber{background:#ffa000;} .dot-white{background:#666;}
-.stTextArea textarea { background-color:#161b27!important; color:#e8e8e8!important; border:1px solid #2a3a50!important; border-radius:10px!important; font-size:14px!important; }
-.stButton > button { background:#378ADD!important; color:#fff!important; font-weight:500!important; border:none!important; border-radius:8px!important; padding:10px 24px!important; width:100%!important; }
-.debate-q { font-size:12px; font-family:'JetBrains Mono',monospace; color:#4fc3f7; background:#0d1a2e; border:1px solid #1e3a5f; border-radius:8px; padding:10px 14px; margin-bottom:1rem; }
-.agent-card { border-radius:10px; overflow:hidden; margin-bottom:8px; border:1px solid transparent; }
-.card-purple{background:#120a1f;border-color:#2a1050;} .card-red{background:#1a0f0f;border-color:#3a1515;}
-.card-blue{background:#0a1525;border-color:#1a3055;} .card-green{background:#0a1a0d;border-color:#153520;}
-.card-amber{background:#1a1205;border-color:#3a2800;} .card-white{background:#13151c;border-color:#2a2d3a;}
-.card-bar{height:2px;width:100%;}
-.bar-purple{background:#9c27b0;} .bar-red{background:#c44;} .bar-blue{background:#378ADD;}
-.bar-green{background:#4caf50;} .bar-amber{background:#ffa000;} .bar-white{background:#666;}
-.card-body{padding:12px 16px;}
-.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
-.card-meta{display:flex;align-items:center;gap:8px;}
-.card-name{font-size:13px;font-weight:500;}
-.card-badge{font-size:10px;border-radius:5px;padding:2px 8px;border:1px solid transparent;}
-.badge-purple{background:#1f0f35;color:#ce93d8;border-color:#4a1f70;}
-.badge-red{background:#2a1010;color:#ef9a9a;border-color:#5a2020;}
-.badge-blue{background:#0d2040;color:#90caf9;border-color:#1e4080;}
-.badge-green{background:#0d2510;color:#a5d6a7;border-color:#1a5025;}
-.badge-amber{background:#251800;color:#ffe082;border-color:#503000;}
-.badge-white{background:#1a1c25;color:#aaa;border-color:#3a3d4a;}
-.card-model{font-size:10px;font-family:'JetBrains Mono',monospace;}
-.cm-purple{color:#4a1f6a;} .cm-red{color:#7a3030;} .cm-blue{color:#1e4a80;}
-.cm-green{color:#1a5c20;} .cm-amber{color:#5c4000;} .cm-white{color:#444;}
-.card-text{font-size:13px;line-height:1.75;}
-.ct-purple{color:#c0a0d0;} .ct-red{color:#d4a0a0;} .ct-blue{color:#9ab8d8;}
-.ct-green{color:#90c090;} .ct-amber{color:#d4b870;} .ct-white{color:#aaa;}
-.coordinator-card { border-radius:12px; overflow:hidden; margin:1rem 0; border:2px solid #2a2d3a; background:#0d0f14; }
-.coordinator-header { background:#13151c; padding:12px 16px; display:flex; align-items:center; gap:10px; border-bottom:1px solid #2a2d3a; }
-.coordinator-title { font-size:14px; font-weight:600; color:#e0e0e0; }
-.coordinator-sub { font-size:11px; color:#666; margin-left:auto; }
-.coordinator-body { padding:16px; }
-.coordinator-text { font-size:13px; line-height:1.85; color:#bbb; white-space:pre-wrap; }
-.chat-user { background:#0d1a2e; border:1px solid #1e3a5f; border-radius:10px; padding:10px 14px; margin:8px 0; font-size:13px; color:#90caf9; }
-.chat-label { font-size:10px; color:#4fc3f7; font-family:'JetBrains Mono',monospace; margin-bottom:4px; }
-.section-title { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#555; font-family:'JetBrains Mono',monospace; margin:1.2rem 0 0.6rem; }
-.divider{border:none;border-top:1px solid #1e2535;margin:1rem 0;}
-.status-bar{display:flex;align-items:center;gap:6px;font-size:11px;color:#555;margin-top:1rem;}
-.sdot{width:5px;height:5px;border-radius:50%;background:#4caf50;}
+.metric-card { background:#161b27; border:1px solid #2a3a50; border-radius:12px; padding:16px 20px; margin-bottom:12px; }
+.metric-label { font-size:11px; color:#888; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px; }
+.metric-value { font-size:24px; font-weight:600; color:#fff; }
+.metric-sub { font-size:12px; color:#555; margin-top:2px; }
+.positive { color:#4caf50; }
+.negative { color:#cc4444; }
+.section-header { font-size:13px; font-weight:600; color:#4fc3f7; letter-spacing:1px; text-transform:uppercase; margin:1.5rem 0 0.8rem; border-bottom:1px solid #1e2535; padding-bottom:6px; }
+.islem-row { background:#161b27; border:1px solid #2a3a50; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; }
+.badge { font-size:10px; border-radius:4px; padding:2px 8px; font-weight:500; }
+.badge-long { background:#0d2510; color:#4caf50; border:1px solid #1a5025; }
+.badge-acik { background:#1a2332; color:#4fc3f7; border:1px solid #1e3a5f; }
+.badge-kapali { background:#1a1205; color:#ffa000; border:1px solid #3a2800; }
+div[data-testid="stSidebar"] { background-color: #0a0d14; border-right: 1px solid #1e2535; }
+.stButton > button { background:#378ADD!important; color:#fff!important; font-weight:500!important; border:none!important; border-radius:8px!important; }
+.stTextArea textarea, .stTextInput input { background-color:#161b27!important; color:#e8e8e8!important; border:1px solid #2a3a50!important; border-radius:8px!important; }
+.stSelectbox > div, .stNumberInput > div { background-color:#161b27!important; }
 </style>
 """, unsafe_allow_html=True)
 
-COLOR_CONFIG = {
-    "purple": {"pill":"pill-purple","pn":"pn-purple","pm":"pm-purple","dot":"dot-purple","card":"card-purple","bar":"bar-purple","badge":"badge-purple","cm":"cm-purple","ct":"ct-purple"},
-    "red":    {"pill":"pill-red",   "pn":"pn-red",   "pm":"pm-red",   "dot":"dot-red",   "card":"card-red",   "bar":"bar-red",   "badge":"badge-red",   "cm":"cm-red",   "ct":"ct-red"},
-    "blue":   {"pill":"pill-blue",  "pn":"pn-blue",  "pm":"pm-blue",  "dot":"dot-blue",  "card":"card-blue",  "bar":"bar-blue",  "badge":"badge-blue",  "cm":"cm-blue",  "ct":"ct-blue"},
-    "green":  {"pill":"pill-green", "pn":"pn-green", "pm":"pm-green", "dot":"dot-green", "card":"card-green", "bar":"bar-green", "badge":"badge-green", "cm":"cm-green", "ct":"ct-green"},
-    "amber":  {"pill":"pill-amber", "pn":"pn-amber", "pm":"pm-amber", "dot":"dot-amber", "card":"card-amber", "bar":"bar-amber", "badge":"badge-amber", "cm":"cm-amber", "ct":"ct-amber"},
-    "white":  {"pill":"pill-white", "pn":"pn-white", "pm":"pm-white", "dot":"dot-white", "card":"card-white", "bar":"bar-white", "badge":"badge-white", "cm":"cm-white", "ct":"ct-white"},
-}
-
+# GitHub bağlantısı
 try:
-    ANTHROPIC_KEY = st.secrets["ANTHROPIC_API_KEY"]
-    GROQ_KEY      = st.secrets["GROQ_API_KEY"]
-except KeyError as e:
-    st.error(f"❌ Secrets eksik: {e}")
-    st.stop()
+    GH_TOKEN = st.secrets["GH_TOKEN"]
+    REPO = "demirelfatih2024-spec/trading-bot"
+except:
+    GH_TOKEN = ""
+    REPO = "demirelfatih2024-spec/trading-bot"
 
-claude_client, groq_key = get_clients(ANTHROPIC_KEY, GROQ_KEY)
+def gh_oku(dosya):
+    try:
+        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        r = requests.get(f"https://api.github.com/repos/{REPO}/contents/{dosya}", headers=headers)
+        if r.status_code != 200:
+            return None, None
+        return json.loads(base64.b64decode(r.json()["content"]).decode()), r.json()["sha"]
+    except:
+        return None, None
 
-if "phase" not in st.session_state:
-    st.session_state.phase = "input"
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "chat_messages" not in st.session_state:
-    st.session_state.chat_messages = []
-if "agent_cards" not in st.session_state:
-    st.session_state.agent_cards = []
-if "question" not in st.session_state:
-    st.session_state.question = ""
-if "agent_responses" not in st.session_state:
-    st.session_state.agent_responses = []
-if "coord_summary" not in st.session_state:
-    st.session_state.coord_summary = ""
+def gh_yaz(dosya, veri, sha=None):
+    try:
+        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        icerik = base64.b64encode(json.dumps(veri, ensure_ascii=False, indent=2).encode()).decode()
+        data = {"message": f"{dosya} güncellendi", "content": icerik}
+        if sha:
+            data["sha"] = sha
+        r = requests.put(f"https://api.github.com/repos/{REPO}/contents/{dosya}", headers=headers, json=data)
+        return r.status_code in [200, 201]
+    except:
+        return False
 
-def render_agent_card(name, config, response):
-    c = COLOR_CONFIG[config["color"]]
-    agent_name = config.get("name", name)
-    display = f"{agent_name} · {config['role']}"
-    return f"""<div class="agent-card {c['card']}"><div class="card-bar {c['bar']}"></div><div class="card-body">
-        <div class="card-header"><div class="card-meta"><span class="dot {c['dot']}"></span>
-        <span class="card-name {c['pn']}">{display}</span>
-        <span class="card-badge {c['badge']}">{config['model_type'].upper()}</span></div>
-        </div>
-        <p class="card-text {c['ct']}">{response.replace(chr(10),'<br>')}</p>
-        </div></div>"""
+# Sidebar navigasyon
+with st.sidebar:
+    st.markdown("### ⚡ Trading Bot")
+    st.markdown("---")
+    sayfa = st.radio("", [
+        "📊 Dashboard",
+        "⚙️ Bot Ayarları",
+        "🤖 Ajanlar",
+        "📋 İşlem Geçmişi",
+        "💬 Koalisyon Danışma"
+    ], label_visibility="collapsed")
 
-def render_coordinator_card(title, content):
-    return f"""<div class="coordinator-card"><div class="coordinator-header">
-        <span style="font-size:16px">⚪</span>
-        <span class="coordinator-title">{title}</span>
-        <span class="coordinator-sub">GROQ</span></div>
-        <div class="coordinator-body"><div class="coordinator-text">{content.replace(chr(10),'<br>')}</div>
-        </div></div>"""
+# ── DASHBOARD ──────────────────────────────────────────────────
+if sayfa == "📊 Dashboard":
+    st.markdown("## 📊 Dashboard")
 
-# Header
-st.markdown('<div class="app-badge">⚡ AI Coalition System</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-title">Koalisyon Danışma Paneli</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-sub">6 uzman ajan girişim fikrinizi analiz eder — koordinatör ile interaktif tartışma yapabilirsiniz.</div>', unsafe_allow_html=True)
+    # Verileri çek
+    bekleyen, _ = gh_oku("bekleyen_islem.json")
+    gecmis, _ = gh_oku("islem_gecmisi.json")
+    islemler = gecmis.get("islemler", []) if gecmis else []
 
-grid_html = '<div class="agents-grid">'
-for name, cfg in AGENTS.items():
-    c = COLOR_CONFIG[cfg["color"]]
-    grid_html += f'<div class="agent-pill {c["pill"]}"><div class="pill-top"><span class="pill-name {c["pn"]}">{cfg["emoji"]} {cfg["role"]}</span><span class="dot {c["dot"]}"></span></div><span class="pill-model {c["pm"]}">{cfg["model_type"]}</span></div>'
-grid_html += '<div class="agent-pill pill-white"><div class="pill-top"><span class="pill-name pn-white">⚪ Koordinatör</span><span class="dot dot-white"></span></div><span class="pill-model pm-white">groq · canlı</span></div></div>'
-st.markdown(grid_html, unsafe_allow_html=True)
+    # Metrikler
+    col1, col2, col3, col4 = st.columns(4)
 
-# INPUT
-if st.session_state.phase == "input":
-    question = st.text_area("", placeholder="Örnek: Türkiye'de organik bebek maması e-ticaret işi kurmak istiyorum.", height=100)
-    if st.button("⚡ Analizi Başlat"):
-        if question.strip():
-            st.session_state.question = question
-            st.session_state.phase = "analysis"
-            st.rerun()
-        else:
-            st.warning("Lütfen bir soru girin.")
+    toplam_islem = len(islemler)
+    kar_islemler = [i for i in islemler if float(i.get("kar_zarar", 0)) > 0]
+    zarar_islemler = [i for i in islemler if float(i.get("kar_zarar", 0)) < 0]
+    toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
 
-# ANALYSIS
-elif st.session_state.phase == "analysis":
-    q = st.session_state.question
-    st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
-    st.markdown('<p class="section-title">Uzman Görüşleri</p>', unsafe_allow_html=True)
-
-    previous_text = ""
-    agent_cards_html = []
-    agent_responses_list = []
-
-    for name, config in AGENTS.items():
-        with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
-            response = asyncio.run(get_agent_response(claude_client, groq_key, name, config, q, previous_text))
-
-        if response == GROQ_RATE_LIMIT_MSG:
-            emoji = config['emoji']
-            role = config['role']
-            card_html = (
-                "<div style='border-radius:10px;overflow:hidden;margin-bottom:8px;"
-                "border:1px solid #4a3800;background:#1f1708;'>"
-                "<div style='height:2px;background:#ffa000;'></div>"
-                "<div style='padding:12px 16px;'>"
-                f"<span style='font-size:13px;font-weight:500;color:#ffe082;'>{emoji} {name} — {role}</span><br>"
-                "<p style='font-size:12px;color:#ffa000;margin-top:6px;'>⚠️ Groq ücretsiz limit doldu. "
-                "Bu ajan yanıt veremiyor. Ücretli plan için: "
-                "<a href='https://console.groq.com' style='color:#ffd54f;'>console.groq.com</a></p>"
-                "</div></div>"
-            )
-            previous_text += f"\n{config['role']}: [limit nedeniyle yanıt veremedi]\n"
-        else:
-            card_html = render_agent_card(name, config, response)
-            previous_text += f"\n{config['role']}: {response}\n"
-
-        agent_responses_list.append((config["role"], response if response != GROQ_RATE_LIMIT_MSG else "[Limit nedeniyle yanıt alınamadı]"))
-        agent_cards_html.append(card_html)
-        st.markdown(card_html, unsafe_allow_html=True)
-
-    st.session_state.agent_cards = agent_cards_html
-    st.session_state.agent_responses = agent_responses_list
-
-    st.markdown('<p class="section-title">Koordinatör Raporu</p>', unsafe_allow_html=True)
-    with st.spinner("⚪ Koordinatör sonuç raporu hazırlıyor..."):
-        coord_raw = asyncio.run(get_coordinator_initial(claude_client, q, previous_text))
-        coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, previous_text))
-
-    st.session_state.coord_summary = coord_response
-    coord_html = render_coordinator_card("Koordinatör — İlk Rapor", coord_response)
-    st.markdown(coord_html, unsafe_allow_html=True)
-
-    st.session_state.chat_history = [
-        {"role": "assistant", "content": f"Uzman görüşleri:\n{previous_text}\n\nKoordinatör raporu:\n{coord_response}"}
-    ]
-    st.session_state.chat_messages = [("coord_initial", coord_response)]
-    st.session_state.phase = "chat"
-    st.rerun()
-
-# CHAT
-elif st.session_state.phase == "chat":
-    q = st.session_state.question
-    st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
-
-    # Uzman kartları her zaman göster
-    st.markdown('<p class="section-title">Uzman Görüşleri</p>', unsafe_allow_html=True)
-    for card_html in st.session_state.agent_cards:
-        st.markdown(card_html, unsafe_allow_html=True)
-
-    st.markdown('<p class="section-title">Koordinatör & Tartışma</p>', unsafe_allow_html=True)
-
-    for msg_type, content in st.session_state.chat_messages:
-        if msg_type in ("coord_initial", "coord"):
-            label = "Koordinatör — İlk Rapor" if msg_type == "coord_initial" else "Koordinatör"
-            st.markdown(render_coordinator_card(label, content), unsafe_allow_html=True)
-        elif msg_type == "user":
-            st.markdown(f'<div class="chat-user"><div class="chat-label">SEN</div>{content}</div>', unsafe_allow_html=True)
-        elif msg_type.startswith("direct::"):
-            expert_name = msg_type.split("::")[1].capitalize()
-            role_map = {"Mert": "Planlama", "Selin": "Risk", "Burak": "Mühendis", "Ayşe": "Girişim", "Kemal": "Finans"}
-            role = role_map.get(expert_name, "")
-            color_map = {"Mert": "#9c27b0", "Selin": "#cc4444", "Burak": "#378ADD", "Ayşe": "#4caf50", "Kemal": "#ffa000"}
-            c = color_map.get(expert_name, "#4fc3f7")
-            st.markdown(f'''<div style="border-radius:10px;overflow:hidden;margin:8px 0;border:1px solid #2a2d3a;background:#13151c;">
-                <div style="height:2px;background:{c};"></div>
-                <div style="padding:12px 16px;">
-                <div style="font-size:10px;font-weight:600;color:{c};letter-spacing:1px;margin-bottom:6px;">{expert_name.upper()} · {role.upper()}</div>
-                <div style="font-size:13px;color:#ccc;line-height:1.75;">{content.replace(chr(10),"<br>")}</div>
-                </div></div>''', unsafe_allow_html=True)
-
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
-
-    user_input = st.text_area("Devam et — soru sor, itiraz et, detay iste:", height=80, key=f"chat_{len(st.session_state.chat_messages)}")
-
-    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
-        if st.button("💬 Gönder"):
-            if user_input.strip():
-                with st.spinner("⚪ Koordinatör yanıtlıyor..."):
-                    coord_raw = asyncio.run(get_coordinator_followup(claude_client, groq_key, st.session_state.chat_history, user_input))
-                context = st.session_state.chat_history[-1]["content"] if st.session_state.chat_history else ""
-                coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, context))
-                st.session_state.chat_history.append({"role": "user", "content": user_input})
-                st.session_state.chat_history.append({"role": "assistant", "content": coord_response})
-                from agents import detect_direct_address, NAME_TO_AGENT, AGENTS
-                dname, dinfo = detect_direct_address(user_input)
-                if dname and dinfo:
-                    tag = f"direct::{dname}"
-                else:
-                    tag = "coord"
-                st.session_state.chat_messages.append(("user", user_input))
-                st.session_state.chat_messages.append((tag, coord_response))
-                st.session_state.coord_summary = coord_response
-                st.rerun()
-    with col2:
-        if st.button("📄 PDF Ver"):
-            with st.spinner("PDF hazırlanıyor..."):
-                pdf_bytes = generate_pdf(
-                    question=st.session_state.question,
-                    agent_responses=st.session_state.get("agent_responses", []),
-                    chat_messages=st.session_state.get("chat_messages", []),
-                    coord_summary=st.session_state.get("coord_summary", "")
-                )
-            st.download_button(
-                label="⬇️ İndir",
-                data=pdf_bytes,
-                file_name="koalisyon_raporu.pdf",
-                mime="application/pdf"
-            )
-    with col3:
-        if st.button("🔄 Yeni Analiz"):
-            for key in ["phase","chat_history","chat_messages","agent_cards","question","agent_responses","coord_summary"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
+        st.markdown(f"""<div class="metric-card">
+            <div class="metric-label">Toplam İşlem</div>
+            <div class="metric-value">{toplam_islem}</div>
+            <div class="metric-sub">Tüm zamanlar</div>
+        </div>""", unsafe_allow_html=True)
 
-    st.markdown('<div class="status-bar"><span class="sdot"></span>Oturum aktif · koordinatör ile tartışmaya devam edebilirsiniz</div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""<div class="metric-card">
+            <div class="metric-label">Karlı / Zararlı</div>
+            <div class="metric-value"><span class="positive">{len(kar_islemler)}</span> / <span class="negative">{len(zarar_islemler)}</span></div>
+            <div class="metric-sub">İşlem sonuçları</div>
+        </div>""", unsafe_allow_html=True)
+
+    with col3:
+        kar_renk = "positive" if toplam_kar >= 0 else "negative"
+        kar_isaret = "+" if toplam_kar >= 0 else ""
+        st.markdown(f"""<div class="metric-card">
+            <div class="metric-label">Toplam Kar/Zarar</div>
+            <div class="metric-value"><span class="{kar_renk}">{kar_isaret}${toplam_kar:.2f}</span></div>
+            <div class="metric-sub">USDT</div>
+        </div>""", unsafe_allow_html=True)
+
+    with col4:
+        bekleyen_durum = bekleyen.get("durum", "yok") if bekleyen else "yok"
+        bekleyen_sembol = bekleyen.get("analiz", {}).get("sembol", "-") if bekleyen else "-"
+        st.markdown(f"""<div class="metric-card">
+            <div class="metric-label">Bekleyen İşlem</div>
+            <div class="metric-value">{bekleyen_sembol}</div>
+            <div class="metric-sub">{bekleyen_durum}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # Son işlemler
+    st.markdown('<div class="section-header">Son İşlemler</div>', unsafe_allow_html=True)
+    if islemler:
+        for i in reversed(islemler[-5:]):
+            kz = float(i.get("kar_zarar", 0))
+            kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
+            kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
+            st.markdown(f"""<div class="islem-row">
+                <div>
+                    <span style="font-weight:500;color:#e8e8e8;">{i.get('sembol','N/A')}</span>
+                    <span class="badge badge-long" style="margin-left:8px;">{i.get('yon','LONG')}</span>
+                    <span class="badge badge-{'acik' if i.get('durum')=='ACIK' else 'kapali'}" style="margin-left:4px;">{i.get('durum','N/A')}</span>
+                </div>
+                <div style="text-align:right;">
+                    <div style="color:{kz_renk};font-weight:600;">{kz_str} USDT</div>
+                    <div style="font-size:11px;color:#555;">{i.get('zaman','')}</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.info("Henüz işlem geçmişi yok.")
+
+# ── BOT AYARLARI ────────────────────────────────────────────────
+elif sayfa == "⚙️ Bot Ayarları":
+    st.markdown("## ⚙️ Bot Ayarları")
+
+    config, sha = gh_oku("config.json")
+    if config is None:
+        config = {
+            "koalisyon_saat_araligi": 6,
+            "max_kaldirac": 10,
+            "max_pozisyon_usdt": 50,
+            "min_hacim_usdt": 1000000,
+            "max_fiyat_usdt": 10,
+            "bot_aktif": True,
+            "onay_zorunlu": True,
+        }
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown('<div class="section-header">Genel Ayarlar</div>', unsafe_allow_html=True)
+        bot_aktif = st.toggle("Bot Aktif", value=config.get("bot_aktif", True))
+        onay_zorunlu = st.toggle("Onay Zorunlu", value=config.get("onay_zorunlu", True))
+        koalisyon_saat = st.selectbox(
+            "Koalisyon Toplantı Sıklığı",
+            [2, 4, 6, 8, 12, 24],
+            index=[2,4,6,8,12,24].index(config.get("koalisyon_saat_araligi", 6))
+        )
+
+    with col2:
+        st.markdown('<div class="section-header">İşlem Ayarları</div>', unsafe_allow_html=True)
+        max_kaldirac = st.slider("Max Kaldıraç", 1, 20, config.get("max_kaldirac", 10))
+        max_pozisyon = st.number_input("Max Pozisyon (USDT)", 5, 1000, int(config.get("max_pozisyon_usdt", 50)))
+        min_hacim = st.number_input("Min Hacim (USDT)", 100000, 100000000, int(config.get("min_hacim_usdt", 1000000)), step=100000)
+        max_fiyat = st.number_input("Max Coin Fiyatı (USDT)", 0.001, 1000.0, float(config.get("max_fiyat_usdt", 10.0)))
+
+    if st.button("💾 Ayarları Kaydet"):
+        yeni_config = {
+            **config,
+            "bot_aktif": bot_aktif,
+            "onay_zorunlu": onay_zorunlu,
+            "koalisyon_saat_araligi": koalisyon_saat,
+            "max_kaldirac": max_kaldirac,
+            "max_pozisyon_usdt": max_pozisyon,
+            "min_hacim_usdt": min_hacim,
+            "max_fiyat_usdt": max_fiyat,
+        }
+        if gh_yaz("config.json", yeni_config, sha):
+            st.success("✅ Ayarlar kaydedildi!")
+        else:
+            st.error("❌ Kayıt başarısız!")
+
+# ── AJANLAR ─────────────────────────────────────────────────────
+elif sayfa == "🤖 Ajanlar":
+    st.markdown("## 🤖 Ajan Karakterleri")
+    st.markdown("Her ajanın kişiliğini ve uzmanlık alanını düzenleyebilirsin.")
+
+    config, sha = gh_oku("config.json")
+    if config is None:
+        config = {}
+
+    ajanlar = config.get("ajanlar", {
+        "Stratejist": "Sen Stratejist'sin. Piyasa koşullarını değerlendir. Max 3 cümle. Türkçe yaz.",
+        "Analist": "Sen Analist'sin. Teknik verileri yorumla. Max 3 cümle. Türkçe yaz.",
+        "Risk": "Sen Risk'sin. Riskleri değerlendir. Max 3 cümle. Türkçe yaz.",
+        "Momentum": "Sen Momentum'sun. Zamanlamayı değerlendir. Max 3 cümle. Türkçe yaz.",
+        "Quant": "Sen Quant'sın. Pozisyon hesapla. Max 3 cümle. Türkçe yaz.",
+        "Orion": "Sen Orion'sun. Final kararı ver. Türkçe yaz."
+    })
+
+    emojiler = {"Stratejist": "🟣", "Analist": "🔵", "Risk": "🔴", "Momentum": "🟢", "Quant": "🟡", "Orion": "⚪"}
+    yeni_ajanlar = {}
+
+    for ajan, sistem in ajanlar.items():
+        emoji = emojiler.get(ajan, "🤖")
+        st.markdown(f"**{emoji} {ajan}**")
+        yeni_ajanlar[ajan] = st.text_area(
+            f"{ajan} karakteri",
+            value=sistem,
+            height=100,
+            key=f"ajan_{ajan}",
+            label_visibility="collapsed"
+        )
+        st.markdown("---")
+
+    if st.button("💾 Karakterleri Kaydet"):
+        yeni_config = {**config, "ajanlar": yeni_ajanlar}
+        if gh_yaz("config.json", yeni_config, sha):
+            st.success("✅ Karakterler kaydedildi!")
+        else:
+            st.error("❌ Kayıt başarısız!")
+
+# ── İŞLEM GEÇMİŞİ ──────────────────────────────────────────────
+elif sayfa == "📋 İşlem Geçmişi":
+    st.markdown("## 📋 İşlem Geçmişi")
+
+    gecmis, _ = gh_oku("islem_gecmisi.json")
+    islemler = gecmis.get("islemler", []) if gecmis else []
+
+    if islemler:
+        # Özet
+        toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
+        kar_renk = "positive" if toplam_kar >= 0 else "negative"
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Toplam İşlem", len(islemler))
+        with col2:
+            st.metric("Karlı İşlem", len([i for i in islemler if float(i.get("kar_zarar",0)) > 0]))
+        with col3:
+            st.metric("Toplam K/Z", f"${toplam_kar:.2f}")
+
+        st.markdown("---")
+
+        # Tablo
+        for i in reversed(islemler):
+            kz = float(i.get("kar_zarar", 0))
+            kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
+            kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
+
+            st.markdown(f"""<div class="islem-row">
+                <div>
+                    <div style="font-weight:600;color:#e8e8e8;margin-bottom:4px;">{i.get('sembol','N/A')} — {i.get('tip','spot').upper()} {i.get('yon','LONG')}</div>
+                    <div style="font-size:11px;color:#555;">
+                        Giriş: {i.get('giris','N/A')} | 
+                        TP: {i.get('tp','N/A')} | 
+                        SL: {i.get('sl','N/A')} | 
+                        Kaldıraç: {i.get('kaldirac',1)}x |
+                        Pozisyon: ${i.get('pozisyon_usdt',0)} USDT
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="color:{kz_renk};font-weight:600;font-size:16px;">{kz_str}</div>
+                    <div style="font-size:11px;color:#555;">{i.get('zaman','')}</div>
+                    <span class="badge badge-{'acik' if i.get('durum')=='ACIK' else 'kapali'}">{i.get('durum','N/A')}</span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.info("Henüz işlem geçmişi yok. İlk işlem yapıldığında burada görünecek.")
+
+# ── KOALİSYON DANIŞMA ───────────────────────────────────────────
+elif sayfa == "💬 Koalisyon Danışma":
+    from agents import AGENTS, get_agent_response, get_coordinator_initial, get_coordinator_followup, get_clients, process_coordinator_response, GROQ_RATE_LIMIT_MSG
+    from pdf_report import generate_pdf
+
+    COLOR_CONFIG = {
+        "purple": {"pill":"pill-purple","pn":"pn-purple","pm":"pm-purple","dot":"dot-purple","card":"card-purple","bar":"bar-purple","badge":"badge-purple","cm":"cm-purple","ct":"ct-purple"},
+        "red":    {"pill":"pill-red",   "pn":"pn-red",   "pm":"pm-red",   "dot":"dot-red",   "card":"card-red",   "bar":"bar-red",   "badge":"badge-red",   "cm":"cm-red",   "ct":"ct-red"},
+        "blue":   {"pill":"pill-blue",  "pn":"pn-blue",  "pm":"pm-blue",  "dot":"dot-blue",  "card":"card-blue",  "bar":"bar-blue",  "badge":"badge-blue",  "cm":"cm-blue",  "ct":"ct-blue"},
+        "green":  {"pill":"pill-green", "pn":"pn-green", "pm":"pm-green", "dot":"dot-green", "card":"card-green", "bar":"bar-green", "badge":"badge-green", "cm":"cm-green", "ct":"ct-green"},
+        "amber":  {"pill":"pill-amber", "pn":"pn-amber", "pm":"pm-amber", "dot":"dot-amber", "card":"card-amber", "bar":"bar-amber", "badge":"badge-amber", "cm":"cm-amber", "ct":"ct-amber"},
+        "white":  {"pill":"pill-white", "pn":"pn-white", "pm":"pm-white", "dot":"dot-white", "card":"card-white", "bar":"bar-white", "badge":"badge-white", "cm":"cm-white", "ct":"ct-white"},
+    }
+
+    try:
+        ANTHROPIC_KEY = st.secrets["ANTHROPIC_API_KEY"]
+        GROQ_KEY = st.secrets["GROQ_API_KEY"]
+    except KeyError as e:
+        st.error(f"❌ Secrets eksik: {e}")
+        st.stop()
+
+    claude_client, groq_key = get_clients(ANTHROPIC_KEY, GROQ_KEY)
+
+    for key, default in [
+        ("phase", "input"), ("chat_history", []), ("chat_messages", []),
+        ("agent_cards", []), ("question", ""), ("agent_responses", []), ("coord_summary", "")
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+    def render_agent_card(name, config, response):
+        c = COLOR_CONFIG[config["color"]]
+        agent_name = config.get("name", name)
+        display = f"{agent_name} · {config['role']}"
+        return f"""<div class="agent-card {c['card']}"><div class="card-bar {c['bar']}"></div><div class="card-body">
+            <div class="card-header"><div class="card-meta"><span class="dot {c['dot']}"></span>
+            <span class="card-name {c['pn']}">{display}</span>
+            <span class="card-badge {c['badge']}">{config['model_type'].upper()}</span></div></div>
+            <p class="card-text {c['ct']}">{response.replace(chr(10),'<br>')}</p>
+            </div></div>"""
+
+    def render_coordinator_card(title, content):
+        return f"""<div class="coordinator-card"><div class="coordinator-header">
+            <span style="font-size:16px">⚪</span>
+            <span class="coordinator-title">{title}</span>
+            <span class="coordinator-sub">Claude</span></div>
+            <div class="coordinator-body"><div class="coordinator-text">{content.replace(chr(10),'<br>')}</div>
+            </div></div>"""
+
+    st.markdown("## 💬 Koalisyon Danışma Paneli")
+
+    grid_html = '<div class="agents-grid">'
+    for name, cfg in AGENTS.items():
+        c = COLOR_CONFIG[cfg["color"]]
+        grid_html += f'<div class="agent-pill {c["pill"]}"><div class="pill-top"><span class="pill-name {c["pn"]}">{cfg["emoji"]} {cfg["role"]}</span><span class="dot {c["dot"]}"></span></div><span class="pill-model {c["pm"]}">{cfg["model_type"]}</span></div>'
+    grid_html += '<div class="agent-pill pill-white"><div class="pill-top"><span class="pill-name pn-white">⚪ Koordinatör</span><span class="dot dot-white"></span></div><span class="pill-model pm-white">claude</span></div></div>'
+    st.markdown(grid_html, unsafe_allow_html=True)
+
+    if st.session_state.phase == "input":
+        question = st.text_area("", placeholder="Örnek: Kripto piyasasında e-ticaret işi kurmak istiyorum...", height=100)
+        if st.button("⚡ Analizi Başlat"):
+            if question.strip():
+                st.session_state.question = question
+                st.session_state.phase = "analysis"
+                st.rerun()
+            else:
+                st.warning("Lütfen bir soru girin.")
+
+    elif st.session_state.phase == "analysis":
+        q = st.session_state.question
+        st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
+
+        previous_text = ""
+        agent_cards_html = []
+        agent_responses_list = []
+
+        for name, config in AGENTS.items():
+            with st.spinner(f"{config['emoji']} {config['role']} değerlendiriyor..."):
+                response = asyncio.run(get_agent_response(claude_client, groq_key, name, config, q, previous_text))
+
+            if response == GROQ_RATE_LIMIT_MSG:
+                card_html = f"<div style='border-radius:10px;border:1px solid #4a3800;background:#1f1708;padding:12px 16px;margin-bottom:8px;'><span style='color:#ffa000;'>⚠️ {config['emoji']} {config['role']} — Groq limit doldu</span></div>"
+                previous_text += f"\n{config['role']}: [limit]\n"
+            else:
+                card_html = render_agent_card(name, config, response)
+                previous_text += f"\n{config['role']}: {response}\n"
+
+            agent_responses_list.append((config["role"], response if response != GROQ_RATE_LIMIT_MSG else "[Limit]"))
+            agent_cards_html.append(card_html)
+            st.markdown(card_html, unsafe_allow_html=True)
+
+        st.session_state.agent_cards = agent_cards_html
+        st.session_state.agent_responses = agent_responses_list
+
+        with st.spinner("⚪ Koordinatör rapor hazırlıyor..."):
+            coord_raw = asyncio.run(get_coordinator_initial(claude_client, q, previous_text))
+            coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, previous_text))
+
+        st.session_state.coord_summary = coord_response
+        st.markdown(render_coordinator_card("Koordinatör — İlk Rapor", coord_response), unsafe_allow_html=True)
+        st.session_state.chat_history = [{"role": "assistant", "content": f"Uzman görüşleri:\n{previous_text}\n\nKoordinatör:\n{coord_response}"}]
+        st.session_state.chat_messages = [("coord_initial", coord_response)]
+        st.session_state.phase = "chat"
+        st.rerun()
+
+    elif st.session_state.phase == "chat":
+        q = st.session_state.question
+        st.markdown(f'<div class="debate-q">❓ {q}</div>', unsafe_allow_html=True)
+
+        for card_html in st.session_state.agent_cards:
+            st.markdown(card_html, unsafe_allow_html=True)
+
+        for msg_type, content in st.session_state.chat_messages:
+            if msg_type in ("coord_initial", "coord"):
+                label = "Koordinatör — İlk Rapor" if msg_type == "coord_initial" else "Koordinatör"
+                st.markdown(render_coordinator_card(label, content), unsafe_allow_html=True)
+            elif msg_type == "user":
+                st.markdown(f'<div class="chat-user"><div class="chat-label">SEN</div>{content}</div>', unsafe_allow_html=True)
+
+        user_input = st.text_area("Devam et:", height=80, key=f"chat_{len(st.session_state.chat_messages)}")
+
+        col1, col2, col3 = st.columns([3, 1, 1])
+        with col1:
+            if st.button("💬 Gönder"):
+                if user_input.strip():
+                    with st.spinner("⚪ Koordinatör yanıtlıyor..."):
+                        coord_raw = asyncio.run(get_coordinator_followup(claude_client, groq_key, st.session_state.chat_history, user_input))
+                        context = st.session_state.chat_history[-1]["content"] if st.session_state.chat_history else ""
+                        coord_response = asyncio.run(process_coordinator_response(claude_client, groq_key, coord_raw, context))
+                    st.session_state.chat_history.append({"role": "user", "content": user_input})
+                    st.session_state.chat_history.append({"role": "assistant", "content": coord_response})
+                    st.session_state.chat_messages.append(("user", user_input))
+                    st.session_state.chat_messages.append(("coord", coord_response))
+                    st.session_state.coord_summary = coord_response
+                    st.rerun()
+        with col2:
+            if st.button("📄 PDF"):
+                with st.spinner("PDF hazırlanıyor..."):
+                    pdf_bytes = generate_pdf(
+                        question=st.session_state.question,
+                        agent_responses=st.session_state.get("agent_responses", []),
+                        chat_messages=st.session_state.get("chat_messages", []),
+                        coord_summary=st.session_state.get("coord_summary", "")
+                    )
+                st.download_button("⬇️ İndir", pdf_bytes, "rapor.pdf", "application/pdf")
+        with col3:
+            if st.button("🔄 Yeni"):
+                for key in ["phase","chat_history","chat_messages","agent_cards","question","agent_responses","coord_summary"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
