@@ -183,6 +183,60 @@ if sayfa == "📊 Dashboard":
             <div class="metric-sub">USDT</div>
         </div>""", unsafe_allow_html=True)
 
+    # Açık Pozisyonlar
+    st.markdown('<div class="section-header">Açık Pozisyonlar</div>', unsafe_allow_html=True)
+    try:
+        import ccxt
+        exchange_poz = ccxt.okx({
+            'apiKey': OKX_API_KEY,
+            'secret': OKX_SECRET_KEY,
+            'password': OKX_PASSPHRASE,
+        })
+        pozisyonlar = exchange_poz.fetch_positions()
+        acik_pozlar = [p for p in pozisyonlar if p['contracts'] and float(p['contracts']) > 0]
+
+        if acik_pozlar:
+            for poz in acik_pozlar:
+                giris = float(poz['entryPrice'] or 0)
+                anlık = float(poz['markPrice'] or 0)
+                kar_zarar = float(poz['unrealizedPnl'] or 0)
+                kar_yuzde = ((anlık - giris) / giris * 100) if giris > 0 else 0
+                kar_renk = "#4caf50" if kar_zarar >= 0 else "#cc4444"
+                kar_isaret = "+" if kar_zarar >= 0 else ""
+
+                col_poz, col_kapat = st.columns([4, 1])
+                with col_poz:
+                    st.markdown(f"""<div class="emir-row">
+                        <div style="font-weight:600;color:#e8e8e8;">{poz['symbol']} — {poz['side'].upper()} {poz['leverage']}x</div>
+                        <div style="font-size:11px;color:#888;margin-top:4px;">
+                            Giriş: {giris} | Anlık: {anlık} | Miktar: {poz['contracts']}
+                        </div>
+                        <div style="margin-top:4px;">
+                            <span style="color:{kar_renk};font-weight:600;">{kar_isaret}${kar_zarar:.4f} ({kar_isaret}{kar_yuzde:.2f}%)</span>
+                            {'| TP: ' + str(poz.get('takeProfitPrice','—')) if poz.get('takeProfitPrice') else ''}
+                            {'| SL: ' + str(poz.get('stopLossPrice','—')) if poz.get('stopLossPrice') else ''}
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                with col_kapat:
+                    if st.button("🔴 Kapat", key=f"kapat_{poz['symbol']}"):
+                        try:
+                            kapat_yon = 'sell' if poz['side'].upper() == 'LONG' else 'buy'
+                            exchange_poz.create_order(
+                                symbol=poz['symbol'],
+                                type='market',
+                                side=kapat_yon,
+                                amount=poz['contracts'],
+                                params={'tdMode': 'cross', 'reduceOnly': True}
+                            )
+                            st.success("✅ Pozisyon kapatıldı!")
+                            st.rerun()
+                        except Exception as kapat_hata:
+                            st.error(f"❌ Hata: {kapat_hata}")
+        else:
+            st.info("Açık pozisyon yok.")
+    except Exception as poz_hata:
+        st.info("Pozisyon verisi alınamadı.")
+
     # Açık Emirler
     st.markdown('<div class="section-header">Açık Emirler</div>', unsafe_allow_html=True)
     acik_emirler = okx_acik_emirler()
