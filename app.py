@@ -20,6 +20,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color:
 .negative { color:#cc4444; }
 .section-header { font-size:13px; font-weight:600; color:#4fc3f7; letter-spacing:1px; text-transform:uppercase; margin:1.5rem 0 0.8rem; border-bottom:1px solid #1e2535; padding-bottom:6px; }
 .islem-row { background:#161b27; border:1px solid #2a3a50; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; }
+.emir-row { background:#1a1205; border:1px solid #3a2800; border-radius:8px; padding:12px 16px; margin-bottom:8px; }
 .badge { font-size:10px; border-radius:4px; padding:2px 8px; font-weight:500; }
 .badge-long { background:#0d2510; color:#4caf50; border:1px solid #1a5025; }
 .badge-acik { background:#1a2332; color:#4fc3f7; border:1px solid #1e3a5f; }
@@ -38,6 +39,16 @@ try:
 except:
     GH_TOKEN = ""
     REPO = "demirelfatih2024-spec/trading-bot"
+
+# OKX bağlantısı
+try:
+    OKX_API_KEY = st.secrets["OKX_API_KEY"]
+    OKX_SECRET_KEY = st.secrets["OKX_SECRET_KEY"]
+    OKX_PASSPHRASE = st.secrets["OKX_PASSPHRASE"]
+except:
+    OKX_API_KEY = ""
+    OKX_SECRET_KEY = ""
+    OKX_PASSPHRASE = ""
 
 def gh_oku(dosya):
     try:
@@ -61,6 +72,58 @@ def gh_yaz(dosya, veri, sha=None):
     except:
         return False
 
+def okx_acik_emirler():
+    try:
+        import ccxt
+        exchange = ccxt.okx({
+            'apiKey': OKX_API_KEY,
+            'secret': OKX_SECRET_KEY,
+            'password': OKX_PASSPHRASE,
+        })
+        emirler = exchange.fetch_open_orders()
+        return [{
+            "emir_id": e['id'],
+            "sembol": e['symbol'],
+            "yon": e['side'].upper(),
+            "fiyat": e['price'],
+            "miktar": e['amount'],
+            "dolan": e['filled'],
+            "kalan": e['remaining'],
+            "zaman": e['datetime'],
+        } for e in emirler]
+    except Exception as ex:
+        return []
+
+def okx_emir_iptal(emir_id, sembol):
+    try:
+        import ccxt
+        exchange = ccxt.okx({
+            'apiKey': OKX_API_KEY,
+            'secret': OKX_SECRET_KEY,
+            'password': OKX_PASSPHRASE,
+        })
+        exchange.cancel_order(emir_id, sembol)
+        return True
+    except:
+        return False
+
+def okx_bakiye():
+    try:
+        import ccxt
+        exchange = ccxt.okx({
+            'apiKey': OKX_API_KEY,
+            'secret': OKX_SECRET_KEY,
+            'password': OKX_PASSPHRASE,
+        })
+        b = exchange.fetch_balance()
+        return {
+            "USDT": float(b['USDT']['free']) if 'USDT' in b and b['USDT']['free'] else 0,
+            "BTC": float(b['BTC']['free']) if 'BTC' in b and b['BTC']['free'] else 0,
+            "ETH": float(b['ETH']['free']) if 'ETH' in b and b['ETH']['free'] else 0,
+        }
+    except:
+        return {"USDT": 0, "BTC": 0, "ETH": 0}
+
 # Sidebar navigasyon
 with st.sidebar:
     st.markdown("### ⚡ Trading Bot")
@@ -77,10 +140,10 @@ with st.sidebar:
 if sayfa == "📊 Dashboard":
     st.markdown("## 📊 Dashboard")
 
-    # Verileri çek
     bekleyen, _ = gh_oku("bekleyen_islem.json")
     gecmis, _ = gh_oku("islem_gecmisi.json")
     islemler = gecmis.get("islemler", []) if gecmis else []
+    bakiye = okx_bakiye()
 
     # Metrikler
     col1, col2, col3, col4 = st.columns(4)
@@ -114,13 +177,36 @@ if sayfa == "📊 Dashboard":
         </div>""", unsafe_allow_html=True)
 
     with col4:
-        bekleyen_durum = bekleyen.get("durum", "yok") if bekleyen else "yok"
-        bekleyen_sembol = bekleyen.get("analiz", {}).get("sembol", "-") if bekleyen else "-"
         st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">Bekleyen İşlem</div>
-            <div class="metric-value">{bekleyen_sembol}</div>
-            <div class="metric-sub">{bekleyen_durum}</div>
+            <div class="metric-label">OKX Bakiye</div>
+            <div class="metric-value">${bakiye['USDT']:.2f}</div>
+            <div class="metric-sub">USDT</div>
         </div>""", unsafe_allow_html=True)
+
+    # Açık Emirler
+    st.markdown('<div class="section-header">Açık Emirler</div>', unsafe_allow_html=True)
+    acik_emirler = okx_acik_emirler()
+
+    if acik_emirler:
+        for emir in acik_emirler:
+            col_emir, col_iptal = st.columns([4, 1])
+            with col_emir:
+                st.markdown(f"""<div class="emir-row">
+                    <div style="font-weight:600;color:#e8e8e8;">{emir['sembol']} — {emir['yon']}</div>
+                    <div style="font-size:11px;color:#888;margin-top:4px;">
+                        Fiyat: {emir['fiyat']} | Miktar: {emir['miktar']} | Dolan: {emir['dolan']} | Kalan: {emir['kalan']}
+                    </div>
+                    <div style="font-size:11px;color:#555;">{emir['zaman']}</div>
+                </div>""", unsafe_allow_html=True)
+            with col_iptal:
+                if st.button("❌ İptal", key=f"iptal_{emir['emir_id']}"):
+                    if okx_emir_iptal(emir['emir_id'], emir['sembol']):
+                        st.success("✅ Emir iptal edildi!")
+                        st.rerun()
+                    else:
+                        st.error("❌ İptal başarısız!")
+    else:
+        st.info("Açık emir yok.")
 
     # Son işlemler
     st.markdown('<div class="section-header">Son İşlemler</div>', unsafe_allow_html=True)
@@ -242,9 +328,7 @@ elif sayfa == "📋 İşlem Geçmişi":
     islemler = gecmis.get("islemler", []) if gecmis else []
 
     if islemler:
-        # Özet
         toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
-        kar_renk = "positive" if toplam_kar >= 0 else "negative"
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -256,7 +340,6 @@ elif sayfa == "📋 İşlem Geçmişi":
 
         st.markdown("---")
 
-        # Tablo
         for i in reversed(islemler):
             kz = float(i.get("kar_zarar", 0))
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
@@ -266,11 +349,8 @@ elif sayfa == "📋 İşlem Geçmişi":
                 <div>
                     <div style="font-weight:600;color:#e8e8e8;margin-bottom:4px;">{i.get('sembol','N/A')} — {i.get('tip','spot').upper()} {i.get('yon','LONG')}</div>
                     <div style="font-size:11px;color:#555;">
-                        Giriş: {i.get('giris','N/A')} | 
-                        TP: {i.get('tp','N/A')} | 
-                        SL: {i.get('sl','N/A')} | 
-                        Kaldıraç: {i.get('kaldirac',1)}x |
-                        Pozisyon: ${i.get('pozisyon_usdt',0)} USDT
+                        Giriş: {i.get('giris','N/A')} | TP: {i.get('tp','N/A')} | SL: {i.get('sl','N/A')} | 
+                        Kaldıraç: {i.get('kaldirac',1)}x | Pozisyon: ${i.get('pozisyon_usdt',0)} USDT
                     </div>
                 </div>
                 <div style="text-align:right;">
@@ -280,7 +360,7 @@ elif sayfa == "📋 İşlem Geçmişi":
                 </div>
             </div>""", unsafe_allow_html=True)
     else:
-        st.info("Henüz işlem geçmişi yok. İlk işlem yapıldığında burada görünecek.")
+        st.info("Henüz işlem geçmişi yok.")
 
 # ── KOALİSYON DANIŞMA ───────────────────────────────────────────
 elif sayfa == "💬 Koalisyon Danışma":
@@ -290,7 +370,7 @@ elif sayfa == "💬 Koalisyon Danışma":
     COLOR_CONFIG = {
         "purple": {"pill":"pill-purple","pn":"pn-purple","pm":"pm-purple","dot":"dot-purple","card":"card-purple","bar":"bar-purple","badge":"badge-purple","cm":"cm-purple","ct":"ct-purple"},
         "red":    {"pill":"pill-red",   "pn":"pn-red",   "pm":"pm-red",   "dot":"dot-red",   "card":"card-red",   "bar":"bar-red",   "badge":"badge-red",   "cm":"cm-red",   "ct":"ct-red"},
-        "blue":   {"pill":"pill-blue",  "pn":"pn-blue",  "pm":"pm-blue",  "dot":"dot-blue",  "card":"card-blue",  "bar":"bar-blue",  "badge":"badge-blue",  "cm":"cm-blue",  "ct":"ct-blue"},
+        "blue":   {"pill":"pill-blue",  "pn":"pn-blue",  "pm":"pm-blue",  "dot":"dot-blue",  "card":"card-blue",  "bar":"bar-bar",  "badge":"badge-blue",  "cm":"cm-blue",  "ct":"ct-blue"},
         "green":  {"pill":"pill-green", "pn":"pn-green", "pm":"pm-green", "dot":"dot-green", "card":"card-green", "bar":"bar-green", "badge":"badge-green", "cm":"cm-green", "ct":"ct-green"},
         "amber":  {"pill":"pill-amber", "pn":"pn-amber", "pm":"pm-amber", "dot":"dot-amber", "card":"card-amber", "bar":"bar-amber", "badge":"badge-amber", "cm":"cm-amber", "ct":"ct-amber"},
         "white":  {"pill":"pill-white", "pn":"pn-white", "pm":"pm-white", "dot":"dot-white", "card":"card-white", "bar":"bar-white", "badge":"badge-white", "cm":"cm-white", "ct":"ct-white"},
@@ -298,7 +378,7 @@ elif sayfa == "💬 Koalisyon Danışma":
 
     try:
         ANTHROPIC_KEY = st.secrets["ANTHROPIC_API_KEY"]
-        GROQ_KEY = st.secrets["GROQ_API_KEY"]
+        GROQ_KEY = st.secrets.get("GROQ_API_KEY", "")
     except KeyError as e:
         st.error(f"❌ Secrets eksik: {e}")
         st.stop()
