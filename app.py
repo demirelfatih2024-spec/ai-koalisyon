@@ -267,14 +267,22 @@ elif sayfa == "⚙️ Bot Ayarları":
     with col2:
         st.markdown('<div class="section-header">İşlem Ayarları</div>', unsafe_allow_html=True)
         max_kaldirac = st.slider("Max Kaldıraç", 1, 20, config.get("max_kaldirac", 10))
-        max_pozisyon = st.number_input("Max Pozisyon (USDT)", 5, 1000, int(config.get("max_pozisyon_usdt", 50)))
+        max_pozisyon = st.number_input("Max Pozisyon Limiti (USDT)", 5, 1000, int(config.get("max_pozisyon_usdt", 50)))
         min_hacim = st.number_input("Min Hacim (USDT)", 100000, 100000000, int(config.get("min_hacim_usdt", 1000000)), step=100000)
         max_fiyat = st.number_input("Max Coin Fiyatı (USDT)", 0.001, 1000.0, float(config.get("max_fiyat_usdt", 10.0)))
+        pozisyon_yuzde = st.slider(
+            "Pozisyon Yüzdesi (Bileşik Kazanç)", 5, 90,
+            int(config.get("pozisyon_yuzde", 0.35) * 100), step=5, format="%d%%"
+        )
+        guncel_bakiye = okx_bakiye()
+        tahmini = round(guncel_bakiye["USDT"] * (pozisyon_yuzde / 100), 2)
+        st.caption(f"💡 Anlık bakiye ${guncel_bakiye["USDT"]:.2f} → Tahmini pozisyon: ${tahmini} USDT")
 
     if st.button("💾 Ayarları Kaydet"):
         yeni_config = {**config, "bot_aktif": bot_aktif, "onay_zorunlu": onay_zorunlu,
                        "koalisyon_saat_araligi": koalisyon_saat, "max_kaldirac": max_kaldirac,
-                       "max_pozisyon_usdt": max_pozisyon, "min_hacim_usdt": min_hacim, "max_fiyat_usdt": max_fiyat}
+                       "max_pozisyon_usdt": max_pozisyon, "min_hacim_usdt": min_hacim,
+                       "max_fiyat_usdt": max_fiyat, "pozisyon_yuzde": round(pozisyon_yuzde / 100, 2)}
         if gh_yaz("config.json", yeni_config, sha):
             st.success("✅ Ayarlar kaydedildi!")
         else:
