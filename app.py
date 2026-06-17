@@ -126,6 +126,92 @@ def okx_bakiye():
     except:
         return {"USDT": 0, "BTC": 0, "ETH": 0}
 
+def acik_pozisyon_sembolleri():
+    """Şu an OKX'te gerçekten açık olan futures pozisyonların sembol listesi"""
+    try:
+        import ccxt
+        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
+        pozisyonlar = exchange.fetch_positions()
+        return set(p['symbol'] for p in pozisyonlar if p['contracts'] and float(p['contracts']) > 0)
+    except:
+        return set()
+
+def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, miktar_tahmini, yon):
+    """
+    OKX'in geçmiş (kapanmış) işlemlerinden, verilen sembol için en yakın
+    gerçekleşen kâr/zararı bulmaya çalışır. Tam kesinlik garanti edilemez
+    (birden fazla işlem aynı coin'de olabilir), bu yüzden en güncel kapanan
+    işlemi baz alır.
+    """
+    try:
+        import ccxt
+        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
+        kapanan_islemler = exchange.fetch_closed_orders(sembol_ccxt, limit=20)
+        if not kapanan_islemler:
+            return None
+        # En son kapanan, reduceOnly olan (pozisyon kapatma) emri bul
+        for o in reversed(kapanan_islemler):
+            if o.get('status') == 'closed' and o.get('filled', 0) and float(o.get('filled', 0)) > 0:
+                # OKX bazı durumlarda 'info' içinde pnl döndürür
+                pnl = o.get('info', {}).get('pnl')
+                if pnl is not None:
+                    return float(pnl)
+        return None
+    except Exception:
+        return None
+
+def islem_gecmisini_senkronize_et():
+    """
+    islem_gecmisi.json'daki durum='ACIK' kayıtları kontrol eder.
+    Eğer OKX'te o sembol için artık açık pozisyon yoksa, kapanmış kabul eder
+    ve OKX'ten gerçekleşen kâr/zararı çekip kaydı günceller.
+    Güncelleme yapıldıysa True, hiçbir değişiklik yoksa False döner.
+    """
+    gecmis, sha = gh_oku("islem_gecmisi.json")
+    if not gecmis:
+        return False
+
+    islemler = gecmis.get("islemler", [])
+    if not islemler:
+        return False
+
+    acik_semboller_okx = acik_pozisyon_sembolleri()
+    degisiklik_oldu = False
+
+    for islem in islemler:
+        if islem.get("durum") != "ACIK":
+            continue
+
+        sembol_ham = islem.get("sembol", "")
+        if not sembol_ham:
+            continue
+
+        # bekleyen_islem/islem_gecmisi'nde sembol "WLD/USDT" formatında olabilir,
+        # futures sembolü ise ccxt'de "WLD/USDT:USDT" şeklinde.
+        sembol_futures = sembol_ham if ":USDT" in sembol_ham else sembol_ham + ":USDT"
+
+        if sembol_futures in acik_semboller_okx:
+            # Hâlâ açık, dokunma
+            continue
+
+        # OKX'te artık açık pozisyon yok -> kapanmış kabul et
+        giris_fiyat = float(islem.get("giris", 0) or 0)
+        yon = islem.get("yon", "LONG")
+        gercek_kz = kapanan_islemin_kar_zararini_bul(sembol_futures, giris_fiyat, 0, yon)
+
+        islem["durum"] = "KAPALI"
+        if gercek_kz is not None:
+            islem["kar_zarar"] = round(gercek_kz, 4)
+        # gercek_kz bulunamadıysa kar_zarar eski değerinde (genelde 0) kalır,
+        # ama en azından durum artık KAPALI olarak işaretlenir.
+        degisiklik_oldu = True
+
+    if degisiklik_oldu:
+        gecmis["islemler"] = islemler
+        gh_yaz("islem_gecmisi.json", gecmis, sha)
+
+    return degisiklik_oldu
+
 # Sidebar navigasyon
 with st.sidebar:
     st.markdown("### ⚡ Trading Bot")
@@ -145,6 +231,11 @@ with st.sidebar:
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
     st.markdown("## 📊 Dashboard")
+
+    with st.spinner("Kapanan işlemler kontrol ediliyor..."):
+        guncellendi = islem_gecmisini_senkronize_et()
+    if guncellendi:
+        st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
 
     bekleyen, _ = gh_oku("bekleyen_islem.json")
     gecmis, _ = gh_oku("islem_gecmisi.json")
@@ -276,7 +367,7 @@ elif sayfa == "⚙️ Bot Ayarları":
         )
         guncel_bakiye = okx_bakiye()
         tahmini = round(guncel_bakiye["USDT"] * (pozisyon_yuzde / 100), 2)
-        st.caption(f"💡 Anlık bakiye ${guncel_bakiye["USDT"]:.2f} → Tahmini pozisyon: ${tahmini} USDT")
+        st.caption(f"💡 Anlık bakiye ${guncel_bakiye['USDT']:.2f} → Tahmini pozisyon: ${tahmini} USDT")
 
     if st.button("💾 Ayarları Kaydet"):
         yeni_config = {**config, "bot_aktif": bot_aktif, "onay_zorunlu": onay_zorunlu,
