@@ -361,6 +361,10 @@ elif sayfa == "⚙️ Bot Ayarları":
         max_pozisyon = st.number_input("Max Pozisyon Limiti (USDT)", 5, 1000, int(config.get("max_pozisyon_usdt", 50)))
         min_hacim = st.number_input("Min Hacim (USDT)", 100000, 100000000, int(config.get("min_hacim_usdt", 1000000)), step=100000)
         max_fiyat = st.number_input("Max Coin Fiyatı (USDT)", 0.001, 1000.0, float(config.get("max_fiyat_usdt", 10.0)))
+        min_pozisyon = st.number_input(
+            "Minimum Pozisyon (USDT)", 1, 100, int(config.get("min_pozisyon_usdt", 8)),
+            help="Hesaplanan pozisyon bunun altında kalırsa otomatik bu seviyeye yükseltilir (komisyona gitmesin diye)."
+        )
         pozisyon_yuzde = st.slider(
             "Pozisyon Yüzdesi (Bileşik Kazanç)", 5, 90,
             int(config.get("pozisyon_yuzde", 0.35) * 100), step=5, format="%d%%"
@@ -373,7 +377,8 @@ elif sayfa == "⚙️ Bot Ayarları":
         yeni_config = {**config, "bot_aktif": bot_aktif, "onay_zorunlu": onay_zorunlu,
                        "koalisyon_saat_araligi": koalisyon_saat, "max_kaldirac": max_kaldirac,
                        "max_pozisyon_usdt": max_pozisyon, "min_hacim_usdt": min_hacim,
-                       "max_fiyat_usdt": max_fiyat, "pozisyon_yuzde": round(pozisyon_yuzde / 100, 2)}
+                       "max_fiyat_usdt": max_fiyat, "min_pozisyon_usdt": min_pozisyon,
+                       "pozisyon_yuzde": round(pozisyon_yuzde / 100, 2)}
         if gh_yaz("config.json", yeni_config, sha):
             st.success("✅ Ayarlar kaydedildi!")
         else:
