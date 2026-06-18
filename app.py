@@ -228,9 +228,30 @@ with st.sidebar:
         st.session_state.giris_yapildi = False
         st.rerun()
 
+RAILWAY_URL = "https://trading-bot-production-4e70.up.railway.app"
+
+def koalisyonu_tetikle():
+    try:
+        r = requests.post(f"{RAILWAY_URL}/koalisyon-tetikle", timeout=15)
+        return r.status_code == 200, r.text
+    except Exception as e:
+        return False, str(e)
+
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
     st.markdown("## 📊 Dashboard")
+
+    col_baslik, col_buton = st.columns([4, 1])
+    with col_baslik:
+        pass
+    with col_buton:
+        if st.button("🔘 Koalisyonu Topla", use_container_width=True):
+            with st.spinner("Koalisyon toplantısı tetikleniyor..."):
+                basarili, mesaj = koalisyonu_tetikle()
+            if basarili:
+                st.toast("✅ Koalisyon toplantısı başlatıldı! Telegram'ı kontrol et.", icon="✅")
+            else:
+                st.toast(f"❌ Tetikleme başarısız: {mesaj}", icon="❌")
 
     with st.spinner("Kapanan işlemler kontrol ediliyor..."):
         guncellendi = islem_gecmisini_senkronize_et()
