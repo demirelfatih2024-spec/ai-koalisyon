@@ -345,13 +345,21 @@ with st.sidebar:
         "💬 Koalisyon Danışma"
     ], label_visibility="collapsed")
     st.markdown("---")
-    # Bot durumu
+    # Bot durumu - GitHub'dan oku
     try:
-        from islem_gecmisi import config_oku
-        _cfg = config_oku()
-        _aktif = "🟢 Bot aktif" if _cfg.get("bot_aktif", True) else "🔴 Bot deaktif"
-        _onay = "· Onay kapalı" if not _cfg.get("onay_zorunlu", True) else "· Onay açık"
-        st.markdown(f"<div style='font-size:11px;color:rgba(255,255,255,0.35);padding:0 4px;'>{_aktif} {_onay}</div>", unsafe_allow_html=True)
+        _cfg, _ = gh_oku("config.json")
+        if _cfg:
+            _aktif_dot = "🟢" if _cfg.get("bot_aktif", True) else "🔴"
+            _aktif_txt = "Bot aktif" if _cfg.get("bot_aktif", True) else "Bot deaktif"
+            _onay_txt = "Onay kapalı" if not _cfg.get("onay_zorunlu", True) else "Onay açık"
+            st.markdown(f"""
+            <div style='padding:8px 4px;border-top:0.5px solid rgba(127,119,221,0.15);margin-top:4px;'>
+                <div style='font-size:12px;color:rgba(255,255,255,0.7);margin-bottom:4px;'>
+                    {_aktif_dot} <span style='color:rgba(255,255,255,0.7);'>{_aktif_txt}</span>
+                </div>
+                <div style='font-size:11px;color:rgba(179,174,238,0.5);'>· {_onay_txt}</div>
+            </div>
+            """, unsafe_allow_html=True)
     except:
         pass
     st.markdown("")
