@@ -34,17 +34,40 @@ st.markdown("""
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .stApp { background-color: var(--color-background-tertiary, #f5f5f5); }
 
-/* Sidebar */
-div[data-testid="stSidebar"] {
+/* Sidebar - agresif override */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebar"] > div > div,
+[data-testid="stSidebar"] section,
+[data-testid="stSidebarContent"],
+.st-emotion-cache-1cypcdb,
+.st-emotion-cache-6tkfeg {
     background-color: #130f2a !important;
     border-right: 0.5px solid rgba(127,119,221,0.2) !important;
 }
-div[data-testid="stSidebar"] * { color: rgba(255,255,255,0.5) !important; }
-div[data-testid="stSidebar"] .st-emotion-cache-1cypcdb,
-div[data-testid="stSidebar"] h3 { color: #ffffff !important; }
-div[data-testid="stSidebar"] [data-testid="stRadio"] label { color: rgba(255,255,255,0.5) !important; font-size: 13px !important; }
-div[data-testid="stSidebar"] [data-testid="stRadio"] label:hover { color: rgba(255,255,255,0.8) !important; }
-div[data-testid="stSidebar"] hr { border-color: rgba(127,119,221,0.15) !important; }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] div {
+    color: rgba(255,255,255,0.55) !important;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    font-size: 13px !important;
+    padding: 4px 0 !important;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+    color: #b3aeee !important;
+    font-weight: 500 !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: rgba(127,119,221,0.15) !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(127,119,221,0.15) !important;
+    color: rgba(255,255,255,0.6) !important;
+    border: 0.5px solid rgba(127,119,221,0.3) !important;
+    font-size: 13px !important;
+}
 
 /* Butonlar */
 .stButton > button {
@@ -295,14 +318,23 @@ def islem_gecmisini_senkronize_et():
 # Sidebar navigasyon
 with st.sidebar:
     st.markdown("""
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.5rem;padding:0 4px;">
-        <div style="width:28px;height:28px;background:#7F77DD;border-radius:7px;display:flex;align-items:center;justify-content:center;">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <polygon points="7,1 8.5,5.5 13,5.5 9.5,8.5 10.5,13 7,10 3.5,13 4.5,8.5 1,5.5 5.5,5.5" stroke="#fff" stroke-width="1" fill="rgba(255,255,255,0.25)"/>
-                <circle cx="7" cy="7" r="1.2" fill="#fff"/>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.75rem;padding:0 2px;">
+        <div style="width:36px;height:36px;background:#7F77DD;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <polygon points="9,1.5 11,7 17,7 12.5,10.5 14,16 9,12.5 4,16 5.5,10.5 1,7 7,7"
+                    stroke="white" stroke-width="1.2" stroke-linejoin="round"
+                    fill="rgba(255,255,255,0.2)"/>
+                <circle cx="9" cy="9" r="1.8" fill="white"/>
+                <line x1="9" y1="0" x2="9" y2="2" stroke="white" stroke-width="1" opacity="0.5"/>
+                <line x1="9" y1="16" x2="9" y2="18" stroke="white" stroke-width="1" opacity="0.5"/>
+                <line x1="0" y1="9" x2="2" y2="9" stroke="white" stroke-width="1" opacity="0.5"/>
+                <line x1="16" y1="9" x2="18" y2="9" stroke="white" stroke-width="1" opacity="0.5"/>
             </svg>
         </div>
-        <span style="font-size:15px;font-weight:500;color:#fff;">Orion</span>
+        <div>
+            <div style="font-size:18px;font-weight:600;color:#ffffff;line-height:1.1;">Orion</div>
+            <div style="font-size:11px;color:rgba(179,174,238,0.7);margin-top:1px;">AI Koalisyon</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     sayfa = st.radio("", [
