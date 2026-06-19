@@ -136,26 +136,42 @@ def acik_pozisyon_sembolleri():
     except:
         return set()
 
-def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, miktar_tahmini, yon):
+def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, yon):
     """
-    OKX'in geçmiş (kapanmış) işlemlerinden, verilen sembol için en yakın
-    gerçekleşen kâr/zararı bulmaya çalışır. Tam kesinlik garanti edilemez
-    (birden fazla işlem aynı coin'de olabilir), bu yüzden en güncel kapanan
-    işlemi baz alır.
+    OKX'ten kapanmış pozisyonun gerçekleşen PnL'ini çekmeye çalışır.
+    Önce fetch_my_trades (işlem geçmişi) dener, bulamazsa fetch_closed_orders dener.
     """
     try:
         import ccxt
-        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
-        kapanan_islemler = exchange.fetch_closed_orders(sembol_ccxt, limit=20)
-        if not kapanan_islemler:
-            return None
-        # En son kapanan, reduceOnly olan (pozisyon kapatma) emri bul
-        for o in reversed(kapanan_islemler):
-            if o.get('status') == 'closed' and o.get('filled', 0) and float(o.get('filled', 0)) > 0:
-                # OKX bazı durumlarda 'info' içinde pnl döndürür
-                pnl = o.get('info', {}).get('pnl')
-                if pnl is not None:
-                    return float(pnl)
+        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
+                             'options': {'defaultType': 'swap'}})
+
+        # Yöntem 1: fetch_my_trades — gerçekleşen işlemlerden pnl çek
+        try:
+            trades = exchange.fetch_my_trades(sembol_ccxt, limit=20)
+            toplam_pnl = 0.0
+            pnl_bulundu = False
+            for t in reversed(trades):
+                pnl = t.get('info', {}).get('pnl')
+                if pnl is not None and pnl != '0' and pnl != '':
+                    toplam_pnl += float(pnl)
+                    pnl_bulundu = True
+            if pnl_bulundu:
+                return round(toplam_pnl, 4)
+        except Exception:
+            pass
+
+        # Yöntem 2: fetch_closed_orders — kapanmış emirlerden info.pnl çek
+        try:
+            kapanan = exchange.fetch_closed_orders(sembol_ccxt, limit=20)
+            for o in reversed(kapanan):
+                if o.get('status') == 'closed' and float(o.get('filled', 0) or 0) > 0:
+                    pnl = o.get('info', {}).get('pnl')
+                    if pnl is not None and pnl != '0' and pnl != '':
+                        return float(pnl)
+        except Exception:
+            pass
+
         return None
     except Exception:
         return None
@@ -197,7 +213,7 @@ def islem_gecmisini_senkronize_et():
         # OKX'te artık açık pozisyon yok -> kapanmış kabul et
         giris_fiyat = float(islem.get("giris", 0) or 0)
         yon = islem.get("yon", "LONG")
-        gercek_kz = kapanan_islemin_kar_zararini_bul(sembol_futures, giris_fiyat, 0, yon)
+        gercek_kz = kapanan_islemin_kar_zararini_bul(sembol_futures, giris_fiyat, yon)
 
         islem["durum"] = "KAPALI"
         if gercek_kz is not None:
@@ -386,6 +402,22 @@ elif sayfa == "⚙️ Bot Ayarları":
             "Minimum Pozisyon (USDT)", 1, 100, int(config.get("min_pozisyon_usdt", 8)),
             help="Hesaplanan pozisyon bunun altında kalırsa otomatik bu seviyeye yükseltilir (komisyona gitmesin diye)."
         )
+        st.markdown("**TP / SL Hedefleri**")
+        col_tp, col_sl = st.columns(2)
+        with col_tp:
+            tp_hedef = st.number_input(
+                "TP Hedefi (%)", 0.5, 10.0,
+                float(config.get("tp_hedef_yuzde", 2.0)),
+                step=0.1, format="%.1f",
+                help="Giriş fiyatından ham fiyat farkı. Kod tarafında otomatik hesaplanır."
+            )
+        with col_sl:
+            sl_hedef = st.number_input(
+                "SL Hedefi (%)", 0.5, 15.0,
+                float(config.get("sl_hedef_yuzde", 3.0)),
+                step=0.1, format="%.1f",
+                help="Giriş fiyatından ham fiyat farkı. TP'den biraz geniş tutulması önerilir."
+            )
         pozisyon_yuzde = st.slider(
             "Pozisyon Yüzdesi (Bileşik Kazanç)", 5, 90,
             int(config.get("pozisyon_yuzde", 0.35) * 100), step=5, format="%d%%"
@@ -399,6 +431,7 @@ elif sayfa == "⚙️ Bot Ayarları":
                        "koalisyon_saat_araligi": koalisyon_saat, "max_kaldirac": max_kaldirac,
                        "max_pozisyon_usdt": max_pozisyon, "min_hacim_usdt": min_hacim,
                        "max_fiyat_usdt": max_fiyat, "min_pozisyon_usdt": min_pozisyon,
+                       "tp_hedef_yuzde": tp_hedef, "sl_hedef_yuzde": sl_hedef,
                        "pozisyon_yuzde": round(pozisyon_yuzde / 100, 2)}
         if gh_yaz("config.json", yeni_config, sha):
             st.success("✅ Ayarlar kaydedildi!")
