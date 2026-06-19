@@ -30,26 +30,90 @@ if not st.session_state.giris_yapildi:
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0f1117; color: #e8e8e8; }
-.stApp { background-color: #0f1117; }
-.metric-card { background:#161b27; border:1px solid #2a3a50; border-radius:12px; padding:16px 20px; margin-bottom:12px; }
-.metric-label { font-size:11px; color:#888; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px; }
-.metric-value { font-size:24px; font-weight:600; color:#fff; }
-.metric-sub { font-size:12px; color:#555; margin-top:2px; }
-.positive { color:#4caf50; }
-.negative { color:#cc4444; }
-.section-header { font-size:13px; font-weight:600; color:#4fc3f7; letter-spacing:1px; text-transform:uppercase; margin:1.5rem 0 0.8rem; border-bottom:1px solid #1e2535; padding-bottom:6px; }
-.islem-row { background:#161b27; border:1px solid #2a3a50; border-radius:8px; padding:10px 14px; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; }
-.emir-row { background:#1a1205; border:1px solid #3a2800; border-radius:8px; padding:12px 16px; margin-bottom:8px; }
-.badge { font-size:10px; border-radius:4px; padding:2px 8px; font-weight:500; }
-.badge-long { background:#0d2510; color:#4caf50; border:1px solid #1a5025; }
-.badge-acik { background:#1a2332; color:#4fc3f7; border:1px solid #1e3a5f; }
-.badge-kapali { background:#1a1205; color:#ffa000; border:1px solid #3a2800; }
-div[data-testid="stSidebar"] { background-color: #0a0d14; border-right: 1px solid #1e2535; }
-.stButton > button { background:#378ADD!important; color:#fff!important; font-weight:500!important; border:none!important; border-radius:8px!important; }
-.stTextArea textarea, .stTextInput input { background-color:#161b27!important; color:#e8e8e8!important; border:1px solid #2a3a50!important; border-radius:8px!important; }
-.stSelectbox > div, .stNumberInput > div { background-color:#161b27!important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.stApp { background-color: var(--color-background-tertiary, #f5f5f5); }
+
+/* Sidebar */
+div[data-testid="stSidebar"] {
+    background-color: #130f2a !important;
+    border-right: 0.5px solid rgba(127,119,221,0.2) !important;
+}
+div[data-testid="stSidebar"] * { color: rgba(255,255,255,0.5) !important; }
+div[data-testid="stSidebar"] .st-emotion-cache-1cypcdb,
+div[data-testid="stSidebar"] h3 { color: #ffffff !important; }
+div[data-testid="stSidebar"] [data-testid="stRadio"] label { color: rgba(255,255,255,0.5) !important; font-size: 13px !important; }
+div[data-testid="stSidebar"] [data-testid="stRadio"] label:hover { color: rgba(255,255,255,0.8) !important; }
+div[data-testid="stSidebar"] hr { border-color: rgba(127,119,221,0.15) !important; }
+
+/* Butonlar */
+.stButton > button {
+    background: #7F77DD !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    font-size: 13px !important;
+}
+.stButton > button:hover { background: #6b63cc !important; }
+
+/* Input alanları */
+.stTextArea textarea, .stTextInput input {
+    background-color: var(--color-background-secondary, #f0f0f0) !important;
+    border: 0.5px solid var(--color-border-tertiary) !important;
+    border-radius: 8px !important;
+    font-size: 13px !important;
+}
+.stSelectbox > div, .stNumberInput > div { border-radius: 8px !important; }
+
+/* Metrik kartlar */
+.mcard { border-radius: 10px; padding: 0.875rem 1rem; border: 0.5px solid var(--color-border-tertiary); background: var(--color-background-primary); border-top: 2px solid transparent; margin-bottom: 0; }
+.mcard.blue { border-top-color: #7F77DD; }
+.mcard.green { border-top-color: #1D9E75; }
+.mcard.pos { border-top-color: #1D9E75; background: #E1F5EE; }
+.mcard.neg { border-top-color: #E24B4A; background: #FCEBEB; }
+.mcard.purple { border-top-color: #534AB7; }
+.mlabel { font-size: 10px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.mval { font-size: 22px; font-weight: 500; color: var(--color-text-primary); }
+.mval.g { color: #0F6E56; }
+.mval.r { color: #A32D2D; }
+.msub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 3px; }
+
+/* Section header */
+.section-header { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin: 1.25rem 0 0.5rem; display: flex; align-items: center; gap: 5px; }
+
+/* Pozisyon kartları */
+.pos-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px; padding: 12px 1rem; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.pos-card.pnl-pos { background: rgba(29,158,117,0.06); border-color: rgba(29,158,117,0.2); }
+.pos-card.pnl-neg { background: rgba(226,75,74,0.06); border-color: rgba(226,75,74,0.2); }
+
+/* Coin badge */
+.cb { width: 36px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; }
+.cb.long { background: #E1F5EE; color: #0F6E56; }
+.cb.short { background: #FCEBEB; color: #A32D2D; }
+
+/* Badge */
+.badge { display: inline-flex; font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 500; }
+.badge-long { background: #E1F5EE; color: #0F6E56; }
+.badge-short { background: #FCEBEB; color: #A32D2D; }
+.badge-acik { background: #E6F1FB; color: #185FA5; }
+.badge-kapali { background: var(--color-background-secondary); color: var(--color-text-tertiary); }
+
+/* İşlem satırı */
+.islem-row { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px; padding: 10px 1rem; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+.islem-row.kar { background: rgba(29,158,117,0.05); border-color: rgba(29,158,117,0.15); }
+.islem-row.zarar { background: rgba(226,75,74,0.05); border-color: rgba(226,75,74,0.15); }
+
+/* Emir satırı */
+.emir-row { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px; padding: 10px 1rem; margin-bottom: 6px; }
+
+/* Ajan kartları */
+.ajan-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 8px; }
+.ajan-card.orion { border-color: #7F77DD; background: rgba(127,119,221,0.04); }
+
+/* Pozitif / negatif renkler */
+.positive { color: #0F6E56 !important; }
+.negative { color: #A32D2D !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -230,8 +294,17 @@ def islem_gecmisini_senkronize_et():
 
 # Sidebar navigasyon
 with st.sidebar:
-    st.markdown("### ⚡ Trading Bot")
-    st.markdown("---")
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.5rem;padding:0 4px;">
+        <div style="width:28px;height:28px;background:#7F77DD;border-radius:7px;display:flex;align-items:center;justify-content:center;">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <polygon points="7,1 8.5,5.5 13,5.5 9.5,8.5 10.5,13 7,10 3.5,13 4.5,8.5 1,5.5 5.5,5.5" stroke="#fff" stroke-width="1" fill="rgba(255,255,255,0.25)"/>
+                <circle cx="7" cy="7" r="1.2" fill="#fff"/>
+            </svg>
+        </div>
+        <span style="font-size:15px;font-weight:500;color:#fff;">Orion</span>
+    </div>
+    """, unsafe_allow_html=True)
     sayfa = st.radio("", [
         "📊 Dashboard",
         "⚙️ Bot Ayarları",
@@ -240,6 +313,16 @@ with st.sidebar:
         "💬 Koalisyon Danışma"
     ], label_visibility="collapsed")
     st.markdown("---")
+    # Bot durumu
+    try:
+        from islem_gecmisi import config_oku
+        _cfg = config_oku()
+        _aktif = "🟢 Bot aktif" if _cfg.get("bot_aktif", True) else "🔴 Bot deaktif"
+        _onay = "· Onay kapalı" if not _cfg.get("onay_zorunlu", True) else "· Onay açık"
+        st.markdown(f"<div style='font-size:11px;color:rgba(255,255,255,0.35);padding:0 4px;'>{_aktif} {_onay}</div>", unsafe_allow_html=True)
+    except:
+        pass
+    st.markdown("")
     if st.button("🚪 Çıkış"):
         st.session_state.giris_yapildi = False
         st.rerun()
@@ -255,13 +338,12 @@ def koalisyonu_tetikle():
 
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
-    st.markdown("## 📊 Dashboard")
-
     col_baslik, col_buton = st.columns([4, 1])
     with col_baslik:
-        pass
+        st.markdown("## 📊 Dashboard")
     with col_buton:
-        if st.button("🔘 Koalisyonu Topla", use_container_width=True):
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("▶ Koalisyonu Topla", use_container_width=True):
             with st.spinner("Koalisyon toplantısı tetikleniyor..."):
                 basarili, mesaj = koalisyonu_tetikle()
             if basarili:
@@ -286,24 +368,25 @@ if sayfa == "📊 Dashboard":
     toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
 
     with col1:
-        st.markdown(f"""<div class="metric-card"><div class="metric-label">Toplam İşlem</div>
-            <div class="metric-value">{toplam_islem}</div><div class="metric-sub">Tüm zamanlar</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="mcard blue"><div class="mlabel">Toplam İşlem</div>
+            <div class="mval">{toplam_islem}</div><div class="msub">Tüm zamanlar</div></div>""", unsafe_allow_html=True)
     with col2:
-        st.markdown(f"""<div class="metric-card"><div class="metric-label">Karlı / Zararlı</div>
-            <div class="metric-value"><span class="positive">{len(kar_islemler)}</span> / <span class="negative">{len(zarar_islemler)}</span></div>
-            <div class="metric-sub">İşlem sonuçları</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="mcard green"><div class="mlabel">Karlı / Zararlı</div>
+            <div class="mval"><span class="g">{len(kar_islemler)}</span> <span style="color:var(--color-text-tertiary);">/</span> <span class="r">{len(zarar_islemler)}</span></div>
+            <div class="msub">İşlem sonuçları</div></div>""", unsafe_allow_html=True)
     with col3:
-        kar_renk = "positive" if toplam_kar >= 0 else "negative"
+        kz_class = "pos" if toplam_kar >= 0 else "neg"
+        kz_val_class = "g" if toplam_kar >= 0 else "r"
         kar_isaret = "+" if toplam_kar >= 0 else ""
-        st.markdown(f"""<div class="metric-card"><div class="metric-label">Toplam Kar/Zarar</div>
-            <div class="metric-value"><span class="{kar_renk}">{kar_isaret}${toplam_kar:.2f}</span></div>
-            <div class="metric-sub">USDT</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="mcard {kz_class}"><div class="mlabel">Toplam Kar/Zarar</div>
+            <div class="mval {kz_val_class}">{kar_isaret}${toplam_kar:.2f}</div>
+            <div class="msub">USDT</div></div>""", unsafe_allow_html=True)
     with col4:
-        st.markdown(f"""<div class="metric-card"><div class="metric-label">OKX Bakiye</div>
-            <div class="metric-value">${bakiye['USDT']:.2f}</div><div class="metric-sub">USDT</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="mcard purple"><div class="mlabel">OKX Bakiye</div>
+            <div class="mval">${bakiye['USDT']:.2f}</div><div class="msub">USDT</div></div>""", unsafe_allow_html=True)
 
     # Açık Pozisyonlar
-    st.markdown('<div class="section-header">Açık Pozisyonlar</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📊 Açık Pozisyonlar</div>', unsafe_allow_html=True)
     try:
         import ccxt
         exchange_poz = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
@@ -319,10 +402,20 @@ if sayfa == "📊 Dashboard":
                 kar_isaret = "+" if kar_zarar >= 0 else ""
                 col_poz, col_kapat = st.columns([4, 1])
                 with col_poz:
-                    st.markdown(f"""<div class="emir-row">
-                        <div style="font-weight:600;color:#e8e8e8;">{poz['symbol']} — {poz['side'].upper()} {poz['leverage']}x</div>
-                        <div style="font-size:11px;color:#888;margin-top:4px;">Giriş: {giris} | Anlık: {anlık} | Miktar: {poz['contracts']}</div>
-                        <div style="margin-top:4px;"><span style="color:{kar_renk};font-weight:600;">{kar_isaret}${kar_zarar:.4f} ({kar_isaret}{kar_yuzde:.2f}%)</span></div>
+                    poz_yon = poz['side'].upper()
+                    poz_class = "pnl-pos" if kar_zarar >= 0 else "pnl-neg"
+                    cb_class = "long" if poz_yon == "LONG" else "short"
+                    coin_kisa = poz['symbol'].split('/')[0][:4]
+                    badge_class = "badge-long" if poz_yon == "LONG" else "badge-short"
+                    st.markdown(f"""<div class="emir-row {poz_class}">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div class="cb {cb_class}">{coin_kisa}</div>
+                            <div>
+                                <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">{poz['symbol']} <span class="badge {badge_class}">{poz_yon} {poz['leverage']}x</span></div>
+                                <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:3px;">Giriş: {giris} · Anlık: {anlık} · Miktar: {poz['contracts']}</div>
+                                <div style="margin-top:4px;font-size:13px;font-weight:500;color:{kar_renk};">{kar_isaret}${kar_zarar:.4f} ({kar_isaret}{kar_yuzde:.2f}%)</div>
+                            </div>
+                        </div>
                     </div>""", unsafe_allow_html=True)
                 with col_kapat:
                     if st.button("🔴 Kapat", key=f"kapat_{poz['symbol']}"):
@@ -340,7 +433,7 @@ if sayfa == "📊 Dashboard":
         st.info("Pozisyon verisi alınamadı.")
 
     # Açık Emirler
-    st.markdown('<div class="section-header">Açık Emirler</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">🕐 Açık Emirler</div>', unsafe_allow_html=True)
     acik_emirler = okx_acik_emirler()
     if acik_emirler:
         for emir in acik_emirler:
@@ -362,17 +455,27 @@ if sayfa == "📊 Dashboard":
         st.info("Açık emir yok.")
 
     # Son işlemler
-    st.markdown('<div class="section-header">Son İşlemler</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📋 Son İşlemler</div>', unsafe_allow_html=True)
     if islemler:
         for i in reversed(islemler[-5:]):
             kz = float(i.get("kar_zarar", 0))
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
-            kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
-            st.markdown(f"""<div class="islem-row">
-                <div><span style="font-weight:500;color:#e8e8e8;">{i.get('sembol','N/A')}</span>
-                <span class="badge badge-long" style="margin-left:8px;">{i.get('yon','LONG')}</span></div>
-                <div style="text-align:right;"><div style="color:{kz_renk};font-weight:600;">{kz_str} USDT</div>
-                <div style="font-size:11px;color:#555;">{i.get('zaman','')}</div></div>
+            kz_renk = "#0F6E56" if kz > 0 else "#A32D2D" if kz < 0 else "var(--color-text-tertiary)"
+            islem_class = "islem-row kar" if kz > 0 else "islem-row zarar" if kz < 0 else "islem-row"
+            yon = i.get('yon','LONG')
+            badge_cls = "badge-long" if yon == "LONG" else "badge-short"
+            coin_kisa = i.get('sembol','N/A').split('/')[0][:4]
+            cb_cls = "long" if yon == "LONG" else "short"
+            st.markdown(f"""<div class="{islem_class}">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <div class="cb {cb_cls}" style="width:28px;height:28px;font-size:9px;">{coin_kisa}</div>
+                    <div>
+                        <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">{i.get('sembol','N/A')}</div>
+                        <div style="font-size:11px;color:var(--color-text-tertiary);">{i.get('zaman','')}</div>
+                    </div>
+                    <span class="badge {badge_cls}">{yon}</span>
+                </div>
+                <div style="font-size:13px;font-weight:500;color:{kz_renk};">{kz_str}</div>
             </div>""", unsafe_allow_html=True)
     else:
         st.info("Henüz işlem geçmişi yok.")
