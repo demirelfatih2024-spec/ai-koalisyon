@@ -264,12 +264,23 @@ def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, yon):
     except Exception:
         return None
 
+def acik_emir_sembolleri():
+    """OKX'te bekleyen (dolmamış) limit emirlerin sembol listesi"""
+    try:
+        import ccxt
+        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
+        emirler = exchange.fetch_open_orders()
+        return set(e['symbol'].replace(':USDT', '') for e in emirler)
+    except:
+        return set()
+
 def islem_gecmisini_senkronize_et():
     """
     islem_gecmisi.json'daki durum='ACIK' kayıtları kontrol eder.
-    Eğer OKX'te o sembol için artık açık pozisyon yoksa, kapanmış kabul eder
-    ve OKX'ten gerçekleşen kâr/zararı çekip kaydı günceller.
-    Güncelleme yapıldıysa True, hiçbir değişiklik yoksa False döner.
+    - OKX'te pozisyon açıksa: dokunma
+    - OKX'te bekleyen limit emir varsa: dokunma (henüz dolmadı)
+    - İkisi de yoksa ve PnL bulunursa: KAPALI yap
+    - İkisi de yoksa ve PnL bulunamazsa: IPTAL yap (emir hiç dolmadı)
     """
     gecmis, sha = gh_oku("islem_gecmisi.json")
     if not gecmis:
@@ -280,6 +291,7 @@ def islem_gecmisini_senkronize_et():
         return False
 
     acik_semboller_okx = acik_pozisyon_sembolleri()
+    bekleyen_emirler = acik_emir_sembolleri()
     degisiklik_oldu = False
 
     for islem in islemler:
@@ -290,24 +302,31 @@ def islem_gecmisini_senkronize_et():
         if not sembol_ham:
             continue
 
-        # bekleyen_islem/islem_gecmisi'nde sembol "WLD/USDT" formatında olabilir,
-        # futures sembolü ise ccxt'de "WLD/USDT:USDT" şeklinde.
-        sembol_futures = sembol_ham if ":USDT" in sembol_ham else sembol_ham + ":USDT"
+        sembol_temiz = sembol_ham.replace(":USDT", "")
+        sembol_futures = sembol_temiz + ":USDT" if ":USDT" not in sembol_ham else sembol_ham
 
+        # Hâlâ açık pozisyon var → dokunma
         if sembol_futures in acik_semboller_okx:
-            # Hâlâ açık, dokunma
             continue
 
-        # OKX'te artık açık pozisyon yok -> kapanmış kabul et
+        # Hâlâ bekleyen limit emir var → henüz dolmadı, dokunma
+        if sembol_temiz in bekleyen_emirler:
+            continue
+
+        # Ne pozisyon ne emir → ya kapandı ya iptal edildi
         giris_fiyat = float(islem.get("giris", 0) or 0)
         yon = islem.get("yon", "LONG")
         gercek_kz = kapanan_islemin_kar_zararini_bul(sembol_futures, giris_fiyat, yon)
 
-        islem["durum"] = "KAPALI"
         if gercek_kz is not None:
+            # Gerçek PnL bulundu → pozisyon açılıp kapandı
+            islem["durum"] = "KAPALI"
             islem["kar_zarar"] = round(gercek_kz, 4)
-        # gercek_kz bulunamadıysa kar_zarar eski değerinde (genelde 0) kalır,
-        # ama en azından durum artık KAPALI olarak işaretlenir.
+        else:
+            # PnL bulunamadı → emir hiç dolmadı, iptal edildi
+            islem["durum"] = "IPTAL"
+            islem["kar_zarar"] = 0
+
         degisiklik_oldu = True
 
     if degisiklik_oldu:
@@ -400,10 +419,12 @@ if sayfa == "📊 Dashboard":
     bakiye = okx_bakiye()
 
     col1, col2, col3, col4 = st.columns(4)
-    toplam_islem = len(islemler)
-    kar_islemler = [i for i in islemler if float(i.get("kar_zarar", 0)) > 0]
-    zarar_islemler = [i for i in islemler if float(i.get("kar_zarar", 0)) < 0]
-    toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
+    # IPTAL olan işlemleri metriklerden çıkar
+    gercek_islemler = [i for i in islemler if i.get("durum") != "IPTAL"]
+    toplam_islem = len(gercek_islemler)
+    kar_islemler = [i for i in gercek_islemler if float(i.get("kar_zarar", 0)) > 0]
+    zarar_islemler = [i for i in gercek_islemler if float(i.get("kar_zarar", 0)) < 0]
+    toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in gercek_islemler)
 
     with col1:
         st.markdown(f"""<div class="mcard blue"><div class="mlabel">Toplam İşlem</div>
@@ -496,6 +517,8 @@ if sayfa == "📊 Dashboard":
     st.markdown('<div class="section-header">📋 Son İşlemler</div>', unsafe_allow_html=True)
     if islemler:
         for i in reversed(islemler[-5:]):
+            if i.get("durum") == "IPTAL":
+                continue
             kz = float(i.get("kar_zarar", 0))
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
             kz_renk = "#0F6E56" if kz > 0 else "#A32D2D" if kz < 0 else "var(--color-text-tertiary)"
