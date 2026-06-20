@@ -378,7 +378,7 @@ def koalisyonu_tetikle():
 
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
-    col_baslik, col_buton = st.columns([4, 1])
+    col_baslik, col_buton, col_yenile = st.columns([4, 1, 1])
     with col_baslik:
         st.markdown("## 📊 Dashboard")
     with col_buton:
@@ -390,6 +390,10 @@ if sayfa == "📊 Dashboard":
                 st.toast("✅ Koalisyon toplantısı başlatıldı! Telegram'ı kontrol et.", icon="✅")
             else:
                 st.toast(f"❌ Tetikleme başarısız: {mesaj}", icon="❌")
+    with col_yenile:
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Yenile", use_container_width=True):
+            st.rerun()
 
     with st.spinner("Kapanan işlemler kontrol ediliyor..."):
         guncellendi = islem_gecmisini_senkronize_et()
