@@ -379,7 +379,7 @@ with st.sidebar:
         st.session_state.giris_yapildi = False
         st.rerun()
 
-RAILWAY_URL = "https://trading-bot-production-4e70.up.railway.app"
+RAILWAY_URL = "https://orion-webhook-ysov.onrender.com"
 
 def koalisyonu_tetikle():
     try:
