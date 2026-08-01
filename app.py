@@ -487,6 +487,7 @@ with st.sidebar:
         "⚙️ Bot Ayarları",
         "🤖 Ajanlar",
         "📋 İşlem Geçmişi",
+        "📉 TP/SL Analizi",
         "💬 Koalisyon Danışma"
     ], label_visibility="collapsed")
     st.markdown("---")
@@ -780,7 +781,11 @@ elif sayfa == "📋 İşlem Geçmişi":
         if st.button("🗑️ Temizle", use_container_width=True):
             _, sha = gh_oku("islem_gecmisi.json")
             if gh_yaz("islem_gecmisi.json", {"islemler": []}, sha):
-                st.toast("✅ İşlem geçmişi temizlendi!", icon="✅")
+                # Temizle'den HEMEN SONRA otomatik senkronizasyon çalışırsa OKX'ten
+                # kapanmış pozisyonları geri çekip listeyi yeniden doldurur — yani
+                # temizlik ekranda görünmez. Bu bayrak, bu render'da senkronizasyonu
+                # atlatarak kullanıcının boş listeyi görmesini sağlar.
+                st.session_state["gecmis_temizlendi"] = True
                 st.cache_data.clear()
                 st.rerun()
             else:
@@ -791,10 +796,13 @@ elif sayfa == "📋 İşlem Geçmişi":
             st.cache_data.clear()
             st.rerun()
 
-    with st.spinner("Kapanan işlemler kontrol ediliyor..."):
-        guncellendi = islem_gecmisini_senkronize_et()
-    if guncellendi:
-        st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
+    if st.session_state.pop("gecmis_temizlendi", False):
+        st.success("✅ İşlem geçmişi temizlendi. Yeni işlemler biriktikçe burada görünecek.")
+    else:
+        with st.spinner("Kapanan işlemler kontrol ediliyor..."):
+            guncellendi = islem_gecmisini_senkronize_et()
+        if guncellendi:
+            st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
 
     gecmis, _ = gh_oku("islem_gecmisi.json")
     islemler = gecmis.get("islemler", []) if gecmis else []
@@ -818,6 +826,135 @@ elif sayfa == "📋 İşlem Geçmişi":
             </div>""", unsafe_allow_html=True)
     else:
         st.info("Henüz işlem geçmişi yok.")
+
+# ── TP/SL ANALİZİ (izole modül) ─────────────────────────────────
+# Bu sayfa 'okx_tpsl_analyzer' aracını AYRI BİR ALT SÜREÇ (subprocess) olarak
+# çalıştırır. Botun karar/emir koduyla hiçbir bağlantısı yoktur; sadece OKX'ten
+# geçmiş pozisyonları OKUR ve TP/SL isabetini analiz eden bir rapor üretir.
+# Neden import değil de subprocess: aracın ağır bağımlılıkları (numpy, matplotlib,
+# pyarrow...) panel süreciyle çakışıp paneli çökertemesin diye tam izolasyon.
+elif sayfa == "📉 TP/SL Analizi":
+    import os as _os
+    import sys as _sys
+    import subprocess as _subprocess
+    from pathlib import Path as _Path
+    import streamlit.components.v1 as _components
+
+    st.markdown("## 📉 TP/SL İsabet Analizi")
+    st.caption("Kapanmış pozisyonlarınızı OKX'ten çekip TP/SL seviyelerinin isabetini "
+               "(MFE/MAE) geriye dönük ölçer. Salt-okuma — emir vermez, ayar değiştirmez.")
+
+    # Analiz aracının klasörünü esnek şekilde bul (yerel + deploy senaryoları).
+    _buradan = _Path(__file__).resolve().parent
+    _adaylar = [
+        _buradan / "okx_tpsl_analyzer",           # repo içine kopyalandıysa (deploy)
+        _buradan.parent / "okx_tpsl_analyzer",    # yerel: bir üst klasörde
+    ]
+    _analiz_dizini = next((p for p in _adaylar if (p / "main.py").exists()), None)
+
+    if _analiz_dizini is None:
+        st.warning(
+            "⚠️ `okx_tpsl_analyzer` klasörü bulunamadı.\n\n"
+            "Bu sekmenin **canlı panelde** çalışması için `okx_tpsl_analyzer` klasörünün "
+            "panel deposuna (ai-koalisyon) eklenmesi ve `requirements.txt`'e aracın "
+            "bağımlılıklarının yazılması gerekir. Yerelde ise klasör panelin bir üstünde olmalı."
+        )
+        st.stop()
+
+    col_s, col_e = st.columns(2)
+    with col_s:
+        _bas = st.date_input("Başlangıç", value=None, key="tpsl_bas",
+                             help="Boş bırakılırsa son ~89 gün. OKX sadece son 3 ayı verir.")
+    with col_e:
+        _bit = st.date_input("Bitiş", value=None, key="tpsl_bit")
+    _semboller = st.text_input("Semboller (opsiyonel)", key="tpsl_sym",
+                               placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
+    _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle raporu göster)", key="tpsl_demo")
+
+    if st.button("▶ Analizi Çalıştır", type="primary"):
+        # Aracın beklediği ortam değişkeni adları paneldekilerden FARKLI; eşleştiriyoruz.
+        _env = dict(_os.environ)
+        try:
+            _env["OKX_API_KEY"] = st.secrets["OKX_API_KEY"]
+            _env["OKX_API_SECRET"] = st.secrets["OKX_SECRET_KEY"]      # panel: OKX_SECRET_KEY
+            _env["OKX_API_PASSPHRASE"] = st.secrets["OKX_PASSPHRASE"]  # panel: OKX_PASSPHRASE
+        except Exception:
+            if not _demo:
+                st.error("OKX anahtarları panel secrets'ında eksik. Demo modunu deneyin.")
+                st.stop()
+
+        _komut = [_sys.executable, "main.py"]
+        if _demo:
+            _komut.append("--demo")
+        else:
+            if _bas:
+                _komut += ["--start", _bas.strftime("%Y-%m-%d")]
+            if _bit:
+                _komut += ["--end", _bit.strftime("%Y-%m-%d")]
+            if _semboller.strip():
+                _komut += ["--symbols", _semboller.strip()]
+
+        with st.spinner("Analiz çalışıyor... (mum verisi çekildiği için 1-3 dakika sürebilir)"):
+            try:
+                _sonuc = _subprocess.run(
+                    _komut, cwd=str(_analiz_dizini), env=_env,
+                    capture_output=True, text=True, timeout=600,
+                )
+            except _subprocess.TimeoutExpired:
+                st.error("⏱ Analiz 10 dakikada bitmedi, durduruldu. Daha dar bir tarih aralığı deneyin.")
+                st.stop()
+
+        # Çıktıyı sakla (rerun'da kaybolmasın)
+        st.session_state["tpsl_stdout"] = _sonuc.stdout
+        st.session_state["tpsl_stderr"] = _sonuc.stderr
+        st.session_state["tpsl_rc"] = _sonuc.returncode
+
+    # ---- Sonuçları göster ----
+    if "tpsl_rc" in st.session_state:
+        _rc = st.session_state["tpsl_rc"]
+        if _rc != 0:
+            st.error(f"Analiz hata ile bitti (çıkış kodu {_rc}).")
+            if st.session_state.get("tpsl_stderr"):
+                with st.expander("Hata ayrıntısı"):
+                    st.code(st.session_state["tpsl_stderr"], language="text")
+        else:
+            st.success("✅ Analiz tamamlandı.")
+
+        _cikti_dizini = _analiz_dizini / "output"
+        _rapor = _cikti_dizini / "report.html"
+        _trades = _cikti_dizini / "trades.csv"
+        _xlsx = _cikti_dizini / "analysis.xlsx"
+
+        # 1) HTML raporu göm
+        if _rapor.exists():
+            st.markdown("#### 📊 Rapor")
+            try:
+                _components.html(_rapor.read_text(encoding="utf-8"),
+                                 height=900, scrolling=True)
+            except Exception as _e:
+                st.warning(f"Rapor gömülemedi: {_e}")
+
+        # 2) İşlem tablosu
+        if _trades.exists():
+            st.markdown("#### 📋 İşlem Tablosu")
+            try:
+                import pandas as _pd
+                _df = _pd.read_csv(_trades)
+                st.dataframe(_df, use_container_width=True, height=300)
+            except Exception as _e:
+                st.caption(f"Tablo okunamadı: {_e}")
+
+        # 3) Excel indirme
+        if _xlsx.exists():
+            with open(_xlsx, "rb") as _f:
+                st.download_button("⬇️ Excel raporu (7 sayfa) indir", _f.read(),
+                                   file_name="tpsl_analysis.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # 4) Konsol çıktısı (özet + uyarılar)
+        if st.session_state.get("tpsl_stdout"):
+            with st.expander("🖥 Konsol çıktısı (özet, kapanış nedenleri, öneriler)"):
+                st.code(st.session_state["tpsl_stdout"], language="text")
 
 # ── KOALİSYON DANIŞMA ───────────────────────────────────────────
 elif sayfa == "💬 Koalisyon Danışma":
