@@ -224,58 +224,71 @@ def acik_pozisyon_sembolleri():
     except:
         return set()
 
-def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, yon):
+def kapanan_islemi_coz(sembol_ccxt, emir_id):
     """
-    OKX'ten kapanmış pozisyonun gerçekleşen PnL'ini çekmeye çalışır.
-    Önce fetch_my_trades (işlem geçmişi) dener, bulamazsa fetch_closed_orders dener.
+    PnL eşleştirmesini SEMBOL üzerinden değil, benzersiz EMİR ID (ordId) üzerinden yapar.
+
+    Eski sürüm sadece sembole bakıp 'o sembolün en son PnL'ini' her kayda yazıyordu;
+    bu yüzden aynı sembolün farklı işlemleri (örn. SNXX'in 9 ayrı işlemi) aynı PnL'i
+    taşıyordu. Artık kayıttaki emir_id'nin gerçekten dolduğu AN'ı buluyor, sonra o anı
+    kapsayan kapanmış pozisyonun PnL'ini döndürüyoruz.
+
+    Dönüş: (durum, kar_zarar)
+      ("KAPALI", float) → pozisyon açılıp kapandı, PnL kesin
+      ("IPTAL",  0.0)   → emir hiç dolmadı, iptal/red edildi
+      (None,     None)  → eşleştirilemedi → UYDURMA VERİ YAZMA, kayıt ACIK kalsın
     """
+    if not emir_id:
+        return None, None
     try:
         import ccxt
-        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
-                             'options': {'defaultType': 'swap'}})
-
-        # Yöntem 1: fetch_positions_history — kapanmış pozisyon geçmişi (OKX'te en kesin PnL buradadır)
-        try:
-            kapanan_pozlar = exchange.fetch_positions_history([sembol_ccxt], limit=10)
-            for p in reversed(kapanan_pozlar):
-                info = p.get('info', {})
-                pnl = info.get('realizedPnl') or info.get('pnl') or info.get('pnlRatio') or p.get('unrealizedPnl')
-                if pnl is not None and str(pnl) != '0' and str(pnl) != '' and str(pnl) != '0.0':
-                    return round(float(pnl), 4)
-        except Exception:
-            pass
-
-        # Yöntem 2: fetch_my_trades — gerçekleşen işlemlerden pnl (OKX fillPnl veya pnl) çek
-        try:
-            trades = exchange.fetch_my_trades(sembol_ccxt, limit=20)
-            toplam_pnl = 0.0
-            pnl_bulundu = False
-            for t in reversed(trades):
-                info = t.get('info', {})
-                pnl = info.get('fillPnl') or info.get('pnl') or info.get('realizedPnl')
-                if pnl is not None and str(pnl) != '0' and str(pnl) != '':
-                    toplam_pnl += float(pnl)
-                    pnl_bulundu = True
-            if pnl_bulundu and round(toplam_pnl, 4) != 0:
-                return round(toplam_pnl, 4)
-        except Exception:
-            pass
-
-        # Yöntem 3: fetch_closed_orders — kapanmış emirlerden info.pnl veya info.fillPnl çek
-        try:
-            kapanan = exchange.fetch_closed_orders(sembol_ccxt, limit=20)
-            for o in reversed(kapanan):
-                if o.get('status') == 'closed' and float(o.get('filled', 0) or 0) > 0:
-                    info = o.get('info', {})
-                    pnl = info.get('pnl') or info.get('fillPnl') or info.get('realizedPnl')
-                    if pnl is not None and str(pnl) != '0' and str(pnl) != '':
-                        return round(float(pnl), 4)
-        except Exception:
-            pass
-
-        return None
+        ex = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
+                       'options': {'defaultType': 'swap'}})
     except Exception:
-        return None
+        return None, None
+
+    # 1) Emrin kendisi: doldu mu, ne zaman doldu?
+    try:
+        emir = ex.fetch_order(str(emir_id), sembol_ccxt)
+    except Exception as e:
+        print(f"fetch_order başarısız ({emir_id}): {e}")
+        return None, None
+
+    dolan = float(emir.get('filled') or 0)
+    if dolan <= 0:
+        if emir.get('status') in ('canceled', 'expired', 'rejected'):
+            return "IPTAL", 0.0
+        return None, None      # hâlâ bekliyor olabilir → dokunma
+
+    dolum_ms = int(emir.get('lastTradeTimestamp') or emir.get('timestamp') or 0)
+    if not dolum_ms:
+        return None, None
+
+    # 2) Bu dolumu ZAMAN OLARAK kapsayan kapanmış pozisyonu bul
+    try:
+        gecmis = ex.fetch_positions_history([sembol_ccxt], limit=50)
+    except Exception as e:
+        print(f"positions_history başarısız ({sembol_ccxt}): {e}")
+        return None, None
+
+    for p in gecmis:
+        info = p.get('info', {}) or {}
+        try:
+            acilis = int(info.get('cTime') or 0)
+            kapanis = int(info.get('uTime') or 0)
+        except (TypeError, ValueError):
+            continue
+        if not acilis or not kapanis:
+            continue
+        if acilis - 60000 <= dolum_ms <= kapanis + 60000:   # ±60 sn tolerans
+            pnl = info.get('realizedPnl')
+            if pnl is None:
+                pnl = info.get('pnl')
+            if pnl is None:
+                return None, None
+            return "KAPALI", round(float(pnl), 4)
+
+    return None, None       # dolum var ama kapanmış pozisyon yok → muhtemelen hâlâ açık
 
 def acik_emir_sembolleri():
     """OKX'te bekleyen (dolmamış) limit emirlerin sembol listesi"""
@@ -333,7 +346,9 @@ def okx_gecmis_islemleri_ice_aktar():
             gecmis = {"islemler": []}
             sha = None
         islemler = gecmis.get("islemler", [])
-        mevcut_semboller = {i.get("sembol"): i for i in islemler}
+        # Sembol bazlı tekilleştirme aynı sembolün farklı işlemlerini tek kayda
+        # indirip PnL'leri karıştırıyordu. Artık benzersiz posId'ye göre tekilleştiriyoruz.
+        mevcut_posidler = {i.get("pos_id") for i in islemler if i.get("pos_id")}
         eklenen_sayisi = 0
 
         for p in kapananlar:
@@ -358,27 +373,28 @@ def okx_gecmis_islemleri_ice_aktar():
             else:
                 zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
-            if sembol in mevcut_semboller:
-                mevcut_semboller[sembol]["durum"] = "KAPALI"
-                mevcut_semboller[sembol]["kar_zarar"] = round(kz, 4)
-            else:
-                yeni_kayit = {
-                    "sembol": sembol,
-                    "yon": yon,
-                    "durum": "KAPALI",
-                    "giris": giris,
-                    "tp": cikis,
-                    "sl": cikis,
-                    "kaldirac": kaldirac,
-                    "kar_zarar": round(kz, 4),
-                    "zaman": zaman_str
-                }
-                islemler.append(yeni_kayit)
-                mevcut_semboller[sembol] = yeni_kayit
-                eklenen_sayisi += 1
+            pos_id = str(info.get("posId") or "")
+            # Kimliklendirilemeyen veya zaten kayıtlı pozisyonu tekrar EKLEME/EZME.
+            if not pos_id or pos_id in mevcut_posidler:
+                continue
 
-        if eklenen_sayisi > 0 or len(islemler) > 0:
-            gecmis["islemler"] = islemler
+            islemler.append({
+                "sembol": sembol,
+                "yon": yon,
+                "durum": "KAPALI",
+                "giris": giris,
+                "cikis": cikis,           # eski kod bunu hem tp hem sl'ye yazıyordu (yanıltıcı)
+                "kaldirac": kaldirac,
+                "kar_zarar": round(kz, 4),
+                "pos_id": pos_id,
+                "zaman": zaman_str
+            })
+            mevcut_posidler.add(pos_id)
+            eklenen_sayisi += 1
+
+        # Sadece gerçekten yeni kayıt varsa yaz (her yenilemede boşuna commit atma).
+        if eklenen_sayisi > 0:
+            gecmis["islemler"] = islemler[-100:]
             gh_yaz("islem_gecmisi.json", gecmis, sha)
         return eklenen_sayisi
     except Exception as e:
@@ -422,21 +438,21 @@ def islem_gecmisini_senkronize_et():
         if sembol_temiz in bekleyen_emirler:
             continue
 
-        # Ne pozisyon ne emir → ya kapandı ya iptal edildi
-        giris_fiyat = float(islem.get("giris", 0) or 0)
-        yon = islem.get("yon", "LONG")
-        gercek_kz = kapanan_islemin_kar_zararini_bul(sembol_futures, giris_fiyat, yon)
+        # Ne pozisyon ne emir → emir ID'siyle kesin sonucu çöz
+        durum, kz = kapanan_islemi_coz(sembol_futures, islem.get("emir_id"))
 
-        if gercek_kz is not None:
-            # Gerçek PnL bulundu → pozisyon açılıp kapandı
+        if durum == "KAPALI":
             islem["durum"] = "KAPALI"
-            islem["kar_zarar"] = round(gercek_kz, 4)
-        else:
-            # PnL bulunamadı → emir hiç dolmadı, iptal edildi
+            islem["kar_zarar"] = kz
+            degisiklik_oldu = True
+        elif durum == "IPTAL":
             islem["durum"] = "IPTAL"
             islem["kar_zarar"] = 0
-
-        degisiklik_oldu = True
+            degisiklik_oldu = True
+        else:
+            # Eşleştirilemedi → UYDURMA VERİ YAZMA. Kayıt ACIK kalır, sonra tekrar denenir.
+            print(f"PnL eşleştirilemedi, kayda dokunulmadı: {sembol_temiz} / emir_id={islem.get('emir_id')}")
+            continue
 
     if degisiklik_oldu:
         gecmis["islemler"] = islemler
@@ -506,7 +522,7 @@ def koalisyonu_tetikle():
 
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
-    col_baslik, col_buton = st.columns([5, 1])
+    col_baslik, col_buton, col_yenile = st.columns([4, 1, 1])
     with col_baslik:
         st.markdown("## 📊 Dashboard")
     with col_buton:
@@ -518,6 +534,11 @@ if sayfa == "📊 Dashboard":
                 st.toast("✅ Koalisyon toplantısı başlatıldı! Telegram'ı kontrol et.", icon="✅")
             else:
                 st.toast(f"❌ Tetikleme başarısız: {mesaj}", icon="❌")
+    with col_yenile:
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Yenile", use_container_width=True):
+            st.cache_data.clear()   # OKX bakiye/pozisyon önbelleğini boşalt → anlık veri
+            st.rerun()
 
     with st.spinner("Kapanan işlemler kontrol ediliyor..."):
         guncellendi = islem_gecmisini_senkronize_et()
