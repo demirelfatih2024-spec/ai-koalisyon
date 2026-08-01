@@ -590,6 +590,7 @@ if sayfa == "📊 Dashboard":
             f"Başlangıç: {_durum.get('baslangic') or '—'} · "
             f"Bitiş: {_durum.get('bitis') or '—'} · "
             f"Çıkış kodu: {_durum.get('cikis_kodu') if _durum.get('cikis_kodu') is not None else '—'}"
+            + (f" · Bellek: {_durum.get('bellek')}" if _durum.get('bellek') else "")
         )
         _satirlar = _durum.get("satirlar") or []
         if _satirlar:
@@ -597,6 +598,18 @@ if sayfa == "📊 Dashboard":
                 st.code("\n".join(_satirlar), language="text")
         elif _durum.get("durum") == "calisiyor":
             st.info("Koşu devam ediyor. Bitince 'Durumu Getir' ile kayıtları görebilirsiniz.")
+
+        # Bu yanıtı hangi kopya verdi? Yenilendikçe değişiyorsa bot çoklu kopya
+        # halinde çalışıyor demektir → her kopyada ayrı zamanlayıcı → çift pozisyon.
+        _surec = _durum.get("surec") or {}
+        if _surec:
+            st.warning(
+                f"🆔 **Bu yanıtı veren kopya:** pid `{_surec.get('pid')}` · "
+                f"replica `{_surec.get('replica')}` · açılış {_surec.get('acilis')}\n\n"
+                f"👉 **'Durumu Getir'e arka arkaya 5-6 kez basın.** Bu satırdaki `pid` "
+                f"değeri değişiyorsa, botunuz birden fazla kopya halinde çalışıyor "
+                f"demektir — çift pozisyonun sebebi budur."
+            )
         st.caption(f"Bot adresi: `{RAILWAY_URL}` · Kaynak: {RAILWAY_URL_KAYNAGI}")
 
     with st.spinner("Kapanan işlemler kontrol ediliyor..."):
