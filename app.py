@@ -234,29 +234,42 @@ def kapanan_islemin_kar_zararini_bul(sembol_ccxt, giris_fiyat, yon):
         exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
                              'options': {'defaultType': 'swap'}})
 
-        # Yöntem 1: fetch_my_trades — gerçekleşen işlemlerden pnl çek
+        # Yöntem 1: fetch_positions_history — kapanmış pozisyon geçmişi (OKX'te en kesin PnL buradadır)
+        try:
+            kapanan_pozlar = exchange.fetch_positions_history([sembol_ccxt], limit=10)
+            for p in reversed(kapanan_pozlar):
+                info = p.get('info', {})
+                pnl = info.get('realizedPnl') or info.get('pnl') or info.get('pnlRatio') or p.get('unrealizedPnl')
+                if pnl is not None and str(pnl) != '0' and str(pnl) != '' and str(pnl) != '0.0':
+                    return round(float(pnl), 4)
+        except Exception:
+            pass
+
+        # Yöntem 2: fetch_my_trades — gerçekleşen işlemlerden pnl (OKX fillPnl veya pnl) çek
         try:
             trades = exchange.fetch_my_trades(sembol_ccxt, limit=20)
             toplam_pnl = 0.0
             pnl_bulundu = False
             for t in reversed(trades):
-                pnl = t.get('info', {}).get('pnl')
-                if pnl is not None and pnl != '0' and pnl != '':
+                info = t.get('info', {})
+                pnl = info.get('fillPnl') or info.get('pnl') or info.get('realizedPnl')
+                if pnl is not None and str(pnl) != '0' and str(pnl) != '':
                     toplam_pnl += float(pnl)
                     pnl_bulundu = True
-            if pnl_bulundu:
+            if pnl_bulundu and round(toplam_pnl, 4) != 0:
                 return round(toplam_pnl, 4)
         except Exception:
             pass
 
-        # Yöntem 2: fetch_closed_orders — kapanmış emirlerden info.pnl çek
+        # Yöntem 3: fetch_closed_orders — kapanmış emirlerden info.pnl veya info.fillPnl çek
         try:
             kapanan = exchange.fetch_closed_orders(sembol_ccxt, limit=20)
             for o in reversed(kapanan):
                 if o.get('status') == 'closed' and float(o.get('filled', 0) or 0) > 0:
-                    pnl = o.get('info', {}).get('pnl')
-                    if pnl is not None and pnl != '0' and pnl != '':
-                        return float(pnl)
+                    info = o.get('info', {})
+                    pnl = info.get('pnl') or info.get('fillPnl') or info.get('realizedPnl')
+                    if pnl is not None and str(pnl) != '0' and str(pnl) != '':
+                        return round(float(pnl), 4)
         except Exception:
             pass
 
@@ -274,14 +287,110 @@ def acik_emir_sembolleri():
     except:
         return set()
 
+def okx_gecmis_islemleri_ice_aktar():
+    """
+    OKX'teki kapanmış vadeli pozisyonları doğrudan çeker ve islem_gecmisi.json içinde 
+    olmayanları 'KAPALI' olarak ekler, olanları günceller.
+    """
+    try:
+        import ccxt
+        exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
+                             'options': {'defaultType': 'swap'}})
+        kapananlar = []
+        try:
+            kapananlar = exchange.fetch_positions_history(None, limit=20)
+        except Exception:
+            pass
+
+        # CCXT boş dönerse veya hata verirse REST API ile doğrudan çek
+        if not kapananlar:
+            try:
+                import time, hashlib, hmac
+                timestamp = str(time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())) + '.000Z'
+                request_path = '/api/v5/account/positions-history?instType=SWAP&limit=20'
+                message = timestamp + 'GET' + request_path
+                signature = base64.b64encode(
+                    hmac.new(OKX_SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
+                ).decode()
+                headers = {
+                    'OK-ACCESS-KEY': OKX_API_KEY,
+                    'OK-ACCESS-SIGN': signature,
+                    'OK-ACCESS-TIMESTAMP': timestamp,
+                    'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,
+                    'Content-Type': 'application/json',
+                }
+                r = requests.get('https://www.okx.com' + request_path, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    kapananlar = r.json().get("data", [])
+            except Exception as e:
+                print(f"REST pozisyon hatası: {e}")
+
+        if not kapananlar:
+            return 0
+
+        gecmis, sha = gh_oku("islem_gecmisi.json")
+        if not gecmis:
+            gecmis = {"islemler": []}
+            sha = None
+        islemler = gecmis.get("islemler", [])
+        mevcut_semboller = {i.get("sembol"): i for i in islemler}
+        eklenen_sayisi = 0
+
+        for p in kapananlar:
+            info = p.get("info", {}) if isinstance(p, dict) and "info" in p else (p if isinstance(p, dict) else {})
+            sembol_ham = p.get("symbol", "") or info.get("instId", "")
+            if not sembol_ham:
+                continue
+            sembol = sembol_ham.split(":")[0].replace("-SWAP", "").replace("-USDT", "/USDT")
+            pnl_val = info.get("realizedPnl") or info.get("pnl") or info.get("pnlRatio") or p.get("unrealizedPnl")
+            kz = float(pnl_val or 0)
+            giris = str(info.get("openAvgPx") or p.get("entryPrice") or 0)
+            cikis = str(info.get("closeAvgPx") or 0)
+            kaldirac = str(info.get("lever") or p.get("leverage") or 1)
+            yon = "LONG" if (p.get("side") == "long" or info.get("direction") == "long") else "SHORT"
+
+            ts = info.get("uTime") or info.get("cTime") or p.get("timestamp")
+            if ts:
+                try:
+                    zaman_str = datetime.fromtimestamp(int(ts)/1000).strftime("%d.%m.%Y %H:%M")
+                except:
+                    zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+            else:
+                zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+            if sembol in mevcut_semboller:
+                mevcut_semboller[sembol]["durum"] = "KAPALI"
+                mevcut_semboller[sembol]["kar_zarar"] = round(kz, 4)
+            else:
+                yeni_kayit = {
+                    "sembol": sembol,
+                    "yon": yon,
+                    "durum": "KAPALI",
+                    "giris": giris,
+                    "tp": cikis,
+                    "sl": cikis,
+                    "kaldirac": kaldirac,
+                    "kar_zarar": round(kz, 4),
+                    "zaman": zaman_str
+                }
+                islemler.append(yeni_kayit)
+                mevcut_semboller[sembol] = yeni_kayit
+                eklenen_sayisi += 1
+
+        if eklenen_sayisi > 0 or len(islemler) > 0:
+            gecmis["islemler"] = islemler
+            gh_yaz("islem_gecmisi.json", gecmis, sha)
+        return eklenen_sayisi
+    except Exception as e:
+        print(f"OKX İçe aktarma hatası: {e}")
+        return 0
+
 def islem_gecmisini_senkronize_et():
     """
-    islem_gecmisi.json'daki durum='ACIK' kayıtları kontrol eder.
-    - OKX'te pozisyon açıksa: dokunma
-    - OKX'te bekleyen limit emir varsa: dokunma (henüz dolmadı)
-    - İkisi de yoksa ve PnL bulunursa: KAPALI yap
-    - İkisi de yoksa ve PnL bulunamazsa: IPTAL yap (emir hiç dolmadı)
+    islem_gecmisi.json'daki durum='ACIK' kayıtları kontrol eder ve
+    ayrıca OKX'teki kapanmış geçmiş pozisyonları içeri aktarır.
     """
+    okx_gecmis_islemleri_ice_aktar()
     gecmis, sha = gh_oku("islem_gecmisi.json")
     if not gecmis:
         return False
@@ -379,7 +488,13 @@ with st.sidebar:
         st.session_state.giris_yapildi = False
         st.rerun()
 
-RAILWAY_URL = "https://trading-bot-2sa4.onrender.com"
+try:
+    RAILWAY_URL = st.secrets["RAILWAY_URL"].rstrip("/")
+except:
+    RAILWAY_URL = "https://trading-bot-production-4e70.up.railway.app" # Railway panelinden alınan yeni adres buraya yazılmalı
+
+if not RAILWAY_URL.startswith("http://") and not RAILWAY_URL.startswith("https://"):
+    RAILWAY_URL = "https://" + RAILWAY_URL
 
 def koalisyonu_tetikle():
     try:
@@ -633,7 +748,37 @@ elif sayfa == "🤖 Ajanlar":
 
 # ── İŞLEM GEÇMİŞİ ──────────────────────────────────────────────
 elif sayfa == "📋 İşlem Geçmişi":
-    st.markdown("## 📋 İşlem Geçmişi")
+    col_baslik, col_cek, col_temizle, col_yenile = st.columns([3, 1.2, 1, 1])
+    with col_baslik:
+        st.markdown("## 📋 İşlem Geçmişi")
+    with col_cek:
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("📥 OKX'ten Çek", use_container_width=True):
+            eklenen = okx_gecmis_islemleri_ice_aktar()
+            st.toast(f"✅ OKX'ten işlemler aktarıldı ({eklenen} kayıt)!", icon="✅")
+            st.cache_data.clear()
+            st.rerun()
+    with col_temizle:
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Temizle", use_container_width=True):
+            _, sha = gh_oku("islem_gecmisi.json")
+            if gh_yaz("islem_gecmisi.json", {"islemler": []}, sha):
+                st.toast("✅ İşlem geçmişi temizlendi!", icon="✅")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("❌ Temizleme başarısız!")
+    with col_yenile:
+        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Yenile", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+    with st.spinner("Kapanan işlemler kontrol ediliyor..."):
+        guncellendi = islem_gecmisini_senkronize_et()
+    if guncellendi:
+        st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
+
     gecmis, _ = gh_oku("islem_gecmisi.json")
     islemler = gecmis.get("islemler", []) if gecmis else []
     if islemler:

@@ -126,7 +126,7 @@ def get_clients(anthropic_key: str, groq_key: str):
     return claude_client, groq_key
 
 
-async def ask_claude(client, system_prompt: str, messages: list, max_tokens: int = 250) -> str:
+async def ask_claude(client, system_prompt: str, messages: list, max_tokens: int = 1000) -> str:
     response = await client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=max_tokens,
@@ -138,7 +138,7 @@ async def ask_claude(client, system_prompt: str, messages: list, max_tokens: int
 
 GROQ_RATE_LIMIT_MSG = "__GROQ_LIMIT__"
 
-async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 250, model: str = "llama-3.1-8b-instant") -> str:
+async def ask_groq(groq_key: str, system_prompt: str, messages: list, max_tokens: int = 1000, model: str = "llama-3.1-8b-instant") -> str:
     await asyncio.sleep(2)
     try:
         async with httpx.AsyncClient() as client:
@@ -189,7 +189,7 @@ Uzman ekibin görüşleri:
 
 Şimdi bu görüşleri değerlendir, eksik varsa ilgili uzmana sor ve cevabını ver, sonra kullanıcıya özet rapor sun."""
     messages = [{"role": "user", "content": prompt}]
-    return await ask_claude(claude_client, COORDINATOR_SYSTEM, messages, max_tokens=900)
+    return await ask_claude(claude_client, COORDINATOR_SYSTEM, messages, max_tokens=1000)
 
 
 NAME_TO_AGENT = {
@@ -234,9 +234,9 @@ Kendi karakterin ve uzmanlığın çerçevesinde, kişisel ve samimi şekilde ya
 
         messages = [{"role": "user", "content": prompt}]
         if model_type == "claude":
-            return await ask_claude(claude_client, config["system"], messages, max_tokens=400)
+            return await ask_claude(claude_client, config["system"], messages, max_tokens=1000)
         else:
-            return await ask_groq(groq_key, config["system"], messages, max_tokens=400)
+            return await ask_groq(groq_key, config["system"], messages, max_tokens=1000)
 
     # Direkt hitap yoksa koordinatör yanıtlasın
     if len(chat_history) > 5:
@@ -244,7 +244,7 @@ Kendi karakterin ve uzmanlığın çerçevesinde, kişisel ve samimi şekilde ya
     else:
         trimmed = chat_history
     history = trimmed + [{"role": "user", "content": user_message}]
-    return await ask_claude(claude_client, COORDINATOR_SYSTEM, history, max_tokens=600)
+    return await ask_claude(claude_client, COORDINATOR_SYSTEM, history, max_tokens=1000)
 
 
 # İsim → ajan eşleştirmesi
