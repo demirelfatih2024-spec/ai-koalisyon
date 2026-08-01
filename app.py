@@ -488,20 +488,48 @@ with st.sidebar:
         st.session_state.giris_yapildi = False
         st.rerun()
 
+# Bot adresi. Eskiden hata sessizce yutuluyordu; artık adresin NEREDEN geldiğini
+# de saklıyoruz ki panelde gösterip yanlış adrese istek atılıp atılmadığını görelim.
+RAILWAY_URL = ""
 try:
-    RAILWAY_URL = st.secrets["RAILWAY_URL"].rstrip("/")
-except:
-    RAILWAY_URL = "https://trading-bot-production-4e70.up.railway.app" # Railway panelinden alınan yeni adres buraya yazılmalı
+    RAILWAY_URL = (st.secrets.get("RAILWAY_URL") or "").strip()
+except Exception:
+    RAILWAY_URL = ""
 
+if RAILWAY_URL:
+    RAILWAY_URL_KAYNAGI = "Streamlit secrets (RAILWAY_URL)"
+else:
+    RAILWAY_URL = "https://trading-bot-production-4e70.up.railway.app"
+    RAILWAY_URL_KAYNAGI = "⚠️ koda gömülü varsayılan — secrets içinde RAILWAY_URL tanımlı değil"
+
+RAILWAY_URL = RAILWAY_URL.rstrip("/")
 if not RAILWAY_URL.startswith("http://") and not RAILWAY_URL.startswith("https://"):
     RAILWAY_URL = "https://" + RAILWAY_URL
 
 def koalisyonu_tetikle():
     try:
-        r = requests.post(f"{RAILWAY_URL}/koalisyon-tetikle", timeout=15)
-        return r.status_code == 200, r.text
+        r = requests.post(f"{RAILWAY_URL}/koalisyon-tetikle", timeout=20)
+        try:
+            veri = r.json()
+            return bool(veri.get("baslatildi")), veri.get("mesaj", r.text)
+        except Exception:
+            # Eski sürüm bot düz metin dönüyor olabilir
+            return r.status_code == 200, r.text
     except Exception as e:
-        return False, str(e)
+        return False, f"Bota ulaşılamadı ({RAILWAY_URL}): {e}"
+
+def koalisyon_durumu_getir():
+    """Botun son koalisyon koşusunun durumunu çeker. (durum_sozlugu, hata_metni)"""
+    try:
+        r = requests.get(f"{RAILWAY_URL}/koalisyon-durum", timeout=15)
+        if r.status_code == 404:
+            return None, ("Bot bu adreste çalışıyor ama '/koalisyon-durum' özelliği yok. "
+                          "Botun güncel sürümü GitHub'a yüklenmemiş olabilir.")
+        if r.status_code != 200:
+            return None, f"Bot HTTP {r.status_code} döndü."
+        return r.json(), None
+    except Exception as e:
+        return None, f"Bota ulaşılamadı: {e}"
 
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
@@ -513,15 +541,63 @@ if sayfa == "📊 Dashboard":
         if st.button("▶ Koalisyonu Topla", use_container_width=True):
             with st.spinner("Koalisyon toplantısı tetikleniyor..."):
                 basarili, mesaj = koalisyonu_tetikle()
-            if basarili:
-                st.toast("✅ Koalisyon toplantısı başlatıldı! Telegram'ı kontrol et.", icon="✅")
-            else:
-                st.toast(f"❌ Tetikleme başarısız: {mesaj}", icon="❌")
+            # Kaybolan toast yerine kalıcı mesaj — ne olduğu ekranda kalsın.
+            st.session_state["son_tetikleme"] = {"basarili": basarili, "mesaj": mesaj}
     with col_yenile:
         st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
         if st.button("🔄 Yenile", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+
+    if "son_tetikleme" in st.session_state:
+        _t = st.session_state["son_tetikleme"]
+        if _t["basarili"]:
+            st.success(f"✅ {_t['mesaj']}")
+        else:
+            st.error(f"❌ {_t['mesaj']}")
+
+    # ── Son Koalisyon Durumu ─────────────────────────────────────────────
+    # Bot ne yaptı? Railway logu açmadan buradan görülebilir.
+    st.markdown('<div class="section-header">🩺 Son Koalisyon Durumu</div>', unsafe_allow_html=True)
+
+    col_durum, col_durum_btn = st.columns([5, 1])
+    with col_durum_btn:
+        if st.button("🔃 Durumu Getir", use_container_width=True):
+            st.rerun()
+
+    _durum, _hata = koalisyon_durumu_getir()
+
+    if _hata:
+        st.error(
+            f"❌ {_hata}\n\n"
+            f"**Kullanılan bot adresi:** `{RAILWAY_URL}`\n\n"
+            f"**Adresin kaynağı:** {RAILWAY_URL_KAYNAGI}\n\n"
+            f"Bu adres Railway panelindeki adresle aynı değilse, 'Koalisyonu Topla' "
+            f"butonu yanlış sunucuya istek atıyor demektir."
+        )
+    elif _durum:
+        _etiket = {
+            "hic_calismadi": ("⚪️", "Bot en son yeniden başladığından beri hiç koalisyon çalışmadı."),
+            "calisiyor":     ("🟡", "Koalisyon şu anda çalışıyor... (1-2 dakika sürer)"),
+            "bitti":         ("🟢", "Son koalisyon sorunsuz tamamlandı."),
+            "hata":          ("🔴", "Son koalisyon HATA ile bitti."),
+        }
+        _ikon, _aciklama = _etiket.get(_durum.get("durum"), ("⚪️", str(_durum.get("durum"))))
+        st.markdown(f"**{_ikon} {_aciklama}**")
+        st.caption(
+            f"Tetikleyen: **{_durum.get('kaynak') or '—'}** "
+            f"({'panelden manuel' if _durum.get('kaynak') == 'panel' else 'saatlik otomatik' if _durum.get('kaynak') == 'cron' else '—'}) · "
+            f"Başlangıç: {_durum.get('baslangic') or '—'} · "
+            f"Bitiş: {_durum.get('bitis') or '—'} · "
+            f"Çıkış kodu: {_durum.get('cikis_kodu') if _durum.get('cikis_kodu') is not None else '—'}"
+        )
+        _satirlar = _durum.get("satirlar") or []
+        if _satirlar:
+            with st.expander("📜 Son koşunun kayıtları — botun tam olarak ne yaptığı"):
+                st.code("\n".join(_satirlar), language="text")
+        elif _durum.get("durum") == "calisiyor":
+            st.info("Koşu devam ediyor. Bitince 'Durumu Getir' ile kayıtları görebilirsiniz.")
+        st.caption(f"Bot adresi: `{RAILWAY_URL}` · Kaynak: {RAILWAY_URL_KAYNAGI}")
 
     with st.spinner("Kapanan işlemler kontrol ediliyor..."):
         guncellendi = islem_gecmisini_senkronize_et()
