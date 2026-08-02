@@ -300,19 +300,23 @@ def acik_emir_sembolleri():
     except:
         return set()
 
-def okx_gecmis_islemleri_ice_aktar():
+def okx_gecmis_islemleri_ice_aktar(bas_ms=None, bit_ms=None):
     """
-    OKX'teki kapanmış vadeli pozisyonları doğrudan çeker ve islem_gecmisi.json içinde 
-    olmayanları 'KAPALI' olarak ekler, olanları günceller.
+    OKX'teki kapanmış vadeli pozisyonları çeker ve islem_gecmisi.json'a ekler.
+    bas_ms / bit_ms (ms epoch) verilirse SADECE o tarih aralığında (kapanış
+    zamanı = uTime) kapanan işlemler eklenir. Verilmezse son 100 kayıt.
     """
     try:
         import ccxt
         exchange = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE,
                              'options': {'defaultType': 'swap'}})
         kapananlar = []
+        # OKX 'after=ts' => uTime'i ts'ten ESKİ kayıtlar. Bitiş tarihini sabitleyip
+        # 100 kayıt geriye gideriz; başlangıç filtresini Python tarafında uygularız.
+        _params = {"after": str(bit_ms)} if bit_ms else {}
         try:
-            # limit=100: OKX'in tek istekte verdiği azami. Daha fazla recovery için.
-            kapananlar = exchange.fetch_positions_history(None, limit=100)
+            # limit=100: OKX'in tek istekte verdiği azami.
+            kapananlar = exchange.fetch_positions_history(None, limit=100, params=_params)
         except Exception:
             pass
 
@@ -322,6 +326,8 @@ def okx_gecmis_islemleri_ice_aktar():
                 import time, hashlib, hmac
                 timestamp = str(time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())) + '.000Z'
                 request_path = '/api/v5/account/positions-history?instType=SWAP&limit=100'
+                if bit_ms:
+                    request_path += f'&after={bit_ms}'
                 message = timestamp + 'GET' + request_path
                 signature = base64.b64encode(
                     hmac.new(OKX_SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
@@ -382,6 +388,16 @@ def okx_gecmis_islemleri_ice_aktar():
                     zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
             else:
                 zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+            # Tarih aralığı filtresi (kullanıcı seçtiyse): aralık dışını atla.
+            try:
+                _ts_int = int(kapanis_ts) if kapanis_ts else 0
+            except ValueError:
+                _ts_int = 0
+            if _ts_int and bas_ms and _ts_int < bas_ms:
+                continue
+            if _ts_int and bit_ms and _ts_int > bit_ms:
+                continue
 
             pos_id = str(info.get("posId") or "")
             anahtar = _anahtar(pos_id, kapanis_ts)
@@ -779,44 +795,47 @@ elif sayfa == "🤖 Ajanlar":
 
 # ── İŞLEM GEÇMİŞİ ──────────────────────────────────────────────
 elif sayfa == "📋 İşlem Geçmişi":
-    col_baslik, col_cek, col_temizle, col_yenile = st.columns([3, 1.2, 1, 1])
-    with col_baslik:
-        st.markdown("## 📋 İşlem Geçmişi")
-    with col_cek:
-        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
-        if st.button("📥 OKX'ten Çek", use_container_width=True):
-            eklenen = okx_gecmis_islemleri_ice_aktar()
-            st.toast(f"✅ OKX'ten işlemler aktarıldı ({eklenen} kayıt)!", icon="✅")
+    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+    st.markdown("## 📋 İşlem Geçmişi")
+
+    # (İstek 3) Tarih aralığı seçici — hangi tarihlerdeki işlemlerin çekileceğini
+    # kullanıcı belirler; her tarihli veriyi otomatik çekmez.
+    _bugun = _dt2.now(_tz2.utc).date()
+    _c1, _c2 = st.columns(2)
+    _g_bas = _c1.date_input("Başlangıç tarihi", value=_bugun - _td2(days=30), key="gec_bas",
+                            help="Bu tarihten itibaren KAPANAN işlemler çekilir. OKX en fazla son 3 ayı verir.")
+    _g_bit = _c2.date_input("Bitiş tarihi", value=_bugun, key="gec_bit")
+
+    _b1, _b2, _b3 = st.columns(3)
+    if _b1.button("📥 OKX'ten Çek", use_container_width=True):
+        _bas_ms = int(_dt2(_g_bas.year, _g_bas.month, _g_bas.day, tzinfo=_tz2.utc).timestamp() * 1000)
+        _bit_ms = int((_dt2(_g_bit.year, _g_bit.month, _g_bit.day, tzinfo=_tz2.utc)
+                       + _td2(days=1) - _td2(milliseconds=1)).timestamp() * 1000)
+        if _bas_ms > _bit_ms:
+            st.error("Başlangıç tarihi bitişten sonra olamaz.")
+        else:
+            with st.spinner("OKX'ten seçilen aralıktaki kapanan işlemler çekiliyor..."):
+                eklenen = okx_gecmis_islemleri_ice_aktar(_bas_ms, _bit_ms)
+            st.toast(f"✅ {eklenen} yeni kayıt eklendi.", icon="✅")
             st.cache_data.clear()
             st.rerun()
-    with col_temizle:
-        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
-        if st.button("🗑️ Temizle", use_container_width=True):
-            _, sha = gh_oku("islem_gecmisi.json")
-            if gh_yaz("islem_gecmisi.json", {"islemler": []}, sha):
-                # Temizle'den HEMEN SONRA otomatik senkronizasyon çalışırsa OKX'ten
-                # kapanmış pozisyonları geri çekip listeyi yeniden doldurur — yani
-                # temizlik ekranda görünmez. Bu bayrak, bu render'da senkronizasyonu
-                # atlatarak kullanıcının boş listeyi görmesini sağlar.
-                st.session_state["gecmis_temizlendi"] = True
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("❌ Temizleme başarısız!")
-    with col_yenile:
-        st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
-        if st.button("🔄 Yenile", use_container_width=True):
+    if _b2.button("🗑️ Temizle", use_container_width=True):
+        _, sha = gh_oku("islem_gecmisi.json")
+        if gh_yaz("islem_gecmisi.json", {"islemler": []}, sha):
+            st.session_state["gecmis_temizlendi"] = True
             st.cache_data.clear()
             st.rerun()
+        else:
+            st.error("❌ Temizleme başarısız!")
+    if _b3.button("🔄 Yenile", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
     if st.session_state.pop("gecmis_temizlendi", False):
-        st.success("✅ İşlem geçmişi temizlendi. Yeni işlemler biriktikçe burada görünecek.")
-    else:
-        with st.spinner("Kapanan işlemler kontrol ediliyor..."):
-            guncellendi = islem_gecmisini_senkronize_et()
-        if guncellendi:
-            st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
+        st.success("✅ İşlem geçmişi temizlendi.")
 
+    # (İstek 2) Sayfa açılışında OTOMATİK veri çekme KALDIRILDI. Veri yalnızca
+    # yukarıdaki '📥 OKX'ten Çek' butonuyla çekilir.
     gecmis, _ = gh_oku("islem_gecmisi.json")
     islemler = gecmis.get("islemler", []) if gecmis else []
     if islemler:
@@ -826,7 +845,21 @@ elif sayfa == "📋 İşlem Geçmişi":
         with col2: st.metric("Karlı İşlem", len([i for i in islemler if float(i.get("kar_zarar",0)) > 0]))
         with col3: st.metric("Toplam K/Z", f"${toplam_kar:.2f}")
         st.markdown("---")
-        for i in reversed(islemler):
+
+        # (İstek 1) Yeniden → eskiye sırala. Önce kapanis_ts (ms), yoksa 'zaman' metni.
+        def _gec_sirala(i):
+            _kts = i.get("kapanis_ts")
+            if _kts:
+                try:
+                    return int(_kts)
+                except (ValueError, TypeError):
+                    pass
+            try:
+                return int(_dt2.strptime(i.get("zaman", ""), "%d.%m.%Y %H:%M").timestamp() * 1000)
+            except Exception:
+                return 0
+
+        for i in sorted(islemler, key=_gec_sirala, reverse=True):
             kz = float(i.get("kar_zarar", 0))
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
             kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
