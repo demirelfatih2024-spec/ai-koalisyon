@@ -550,6 +550,39 @@ def koalisyonu_tetikle():
     except Exception as e:
         return False, f"Bota ulaşılamadı ({RAILWAY_URL}): {e}"
 
+# ── ORTAK: İşlem geçmişi tarih aralığı (Dashboard + İşlem Geçmişi AYNI ayarı kullanır) ──
+# Kullanıcının seçtiği aralık st.session_state'te 'gecmis_bas'/'gecmis_bit' olarak
+# saklanır; iki sayfa da bunu okur → tek davranış. Varsayılan: son 30 gün.
+def _gecmis_aralik_ms():
+    from datetime import datetime as _d, timezone as _z, timedelta as _t
+    bugun = _d.now(_z.utc).date()
+    bas = st.session_state.get("gecmis_bas") or (bugun - _t(days=30))
+    bit = st.session_state.get("gecmis_bit") or bugun
+    bas_ms = int(_d(bas.year, bas.month, bas.day, tzinfo=_z.utc).timestamp() * 1000)
+    bit_ms = int((_d(bit.year, bit.month, bit.day, tzinfo=_z.utc)
+                  + _t(days=1) - _t(milliseconds=1)).timestamp() * 1000)
+    return bas_ms, bit_ms
+
+def _islem_zaman_ms(islem):
+    kts = islem.get("kapanis_ts")
+    if kts:
+        try:
+            return int(kts)
+        except (ValueError, TypeError):
+            pass
+    from datetime import datetime as _d
+    try:
+        return int(_d.strptime(islem.get("zaman", ""), "%d.%m.%Y %H:%M").timestamp() * 1000)
+    except Exception:
+        return None
+
+def _araligda_filtrele(islemler, bas_ms, bit_ms):
+    """Sadece [bas_ms, bit_ms] aralığında kapanan işlemleri döndürür (yeni→eski sıralı).
+    Zamanı okunamayan kayıt güvenli tarafta gösterilir."""
+    out = [i for i in islemler
+           if (_islem_zaman_ms(i) is None) or (bas_ms <= _islem_zaman_ms(i) <= bit_ms)]
+    return sorted(out, key=lambda i: (_islem_zaman_ms(i) or 0), reverse=True)
+
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
     col_baslik, col_buton, col_yenile = st.columns([4, 1, 1])
@@ -570,14 +603,16 @@ if sayfa == "📊 Dashboard":
             st.cache_data.clear()   # OKX bakiye/pozisyon önbelleğini boşalt → anlık veri
             st.rerun()
 
-    with st.spinner("Kapanan işlemler kontrol ediliyor..."):
-        guncellendi = islem_gecmisini_senkronize_et()
-    if guncellendi:
-        st.toast("📊 Kapanan işlemler güncellendi", icon="✅")
-
+    # NOT: Dashboard artık OKX'ten OTOMATİK geçmiş çekmiyor. Eskiden buradaki
+    # senkronizasyon her açılışta 100 kapanmış pozisyonu geri getirip 'Temizle'yi
+    # anlamsız kılıyordu. Veri yalnızca '📋 İşlem Geçmişi' sayfasındaki butonla,
+    # seçilen tarih aralığında çekilir. Dashboard sadece kayıtlı veriyi gösterir.
     bekleyen, _ = gh_oku("bekleyen_islem.json")
     gecmis, _ = gh_oku("islem_gecmisi.json")
-    islemler = gecmis.get("islemler", []) if gecmis else []
+    _tum_islemler = gecmis.get("islemler", []) if gecmis else []
+    # Kullanıcının seçtiği tarih aralığına göre filtrele (İşlem Geçmişi ile aynı ayar).
+    _bas_ms, _bit_ms = _gecmis_aralik_ms()
+    islemler = _araligda_filtrele(_tum_islemler, _bas_ms, _bit_ms)
     bakiye = okx_bakiye()
 
     col1, col2, col3, col4 = st.columns(4)
@@ -590,7 +625,7 @@ if sayfa == "📊 Dashboard":
 
     with col1:
         st.markdown(f"""<div class="mcard blue"><div class="mlabel">Toplam İşlem</div>
-            <div class="mval">{toplam_islem}</div><div class="msub">Tüm zamanlar</div></div>""", unsafe_allow_html=True)
+            <div class="mval">{toplam_islem}</div><div class="msub">Seçili tarih aralığı</div></div>""", unsafe_allow_html=True)
     with col2:
         st.markdown(f"""<div class="mcard green"><div class="mlabel">Karlı / Zararlı</div>
             <div class="mval"><span class="g">{len(kar_islemler)}</span> <span style="color:var(--color-text-tertiary);">/</span> <span class="r">{len(zarar_islemler)}</span></div>
@@ -678,7 +713,7 @@ if sayfa == "📊 Dashboard":
     # Son işlemler
     st.markdown('<div class="section-header">📋 Son İşlemler</div>', unsafe_allow_html=True)
     if islemler:
-        for i in reversed(islemler[-5:]):
+        for i in islemler[:5]:   # islemler zaten yeni→eski sıralı ve aralığa göre filtreli
             if i.get("durum") == "IPTAL":
                 continue
             kz = float(i.get("kar_zarar", 0))
@@ -799,12 +834,19 @@ elif sayfa == "📋 İşlem Geçmişi":
     st.markdown("## 📋 İşlem Geçmişi")
 
     # (İstek 3) Tarih aralığı seçici — hangi tarihlerdeki işlemlerin çekileceğini
-    # kullanıcı belirler; her tarihli veriyi otomatik çekmez.
+    # kullanıcı belirler. Seçim, Dashboard'un da okuduğu ORTAK ayara yazılır.
     _bugun = _dt2.now(_tz2.utc).date()
     _c1, _c2 = st.columns(2)
-    _g_bas = _c1.date_input("Başlangıç tarihi", value=_bugun - _td2(days=30), key="gec_bas",
-                            help="Bu tarihten itibaren KAPANAN işlemler çekilir. OKX en fazla son 3 ayı verir.")
-    _g_bit = _c2.date_input("Bitiş tarihi", value=_bugun, key="gec_bit")
+    _g_bas = _c1.date_input("Başlangıç tarihi",
+                            value=st.session_state.get("gecmis_bas", _bugun - _td2(days=30)),
+                            help="Bu tarihten itibaren KAPANAN işlemler. OKX en fazla son 3 ayı verir.")
+    _g_bit = _c2.date_input("Bitiş tarihi",
+                            value=st.session_state.get("gecmis_bit", _bugun))
+    # Ortak ayara yaz — Dashboard aynı aralığı kullansın (tek davranış).
+    st.session_state["gecmis_bas"] = _g_bas
+    st.session_state["gecmis_bit"] = _g_bit
+    st.caption(f"📅 Gösterilen ve çekilecek aralık: **{_g_bas.strftime('%d.%m.%Y')} → "
+               f"{_g_bit.strftime('%d.%m.%Y')}** (bu ayar Dashboard'da da geçerli)")
 
     _b1, _b2, _b3 = st.columns(3)
     if _b1.button("📥 OKX'ten Çek", use_container_width=True):
@@ -837,29 +879,19 @@ elif sayfa == "📋 İşlem Geçmişi":
     # (İstek 2) Sayfa açılışında OTOMATİK veri çekme KALDIRILDI. Veri yalnızca
     # yukarıdaki '📥 OKX'ten Çek' butonuyla çekilir.
     gecmis, _ = gh_oku("islem_gecmisi.json")
-    islemler = gecmis.get("islemler", []) if gecmis else []
+    _tum = gecmis.get("islemler", []) if gecmis else []
+    # (İstek 1 + tek davranış) Seçili aralığa göre filtrele + yeni→eski sırala.
+    _bas_ms, _bit_ms = _gecmis_aralik_ms()
+    islemler = _araligda_filtrele(_tum, _bas_ms, _bit_ms)
     if islemler:
         toplam_kar = sum(float(i.get("kar_zarar", 0)) for i in islemler)
         col1, col2, col3 = st.columns(3)
-        with col1: st.metric("Toplam İşlem", len(islemler))
+        with col1: st.metric("İşlem (aralıkta)", len(islemler))
         with col2: st.metric("Karlı İşlem", len([i for i in islemler if float(i.get("kar_zarar",0)) > 0]))
         with col3: st.metric("Toplam K/Z", f"${toplam_kar:.2f}")
         st.markdown("---")
 
-        # (İstek 1) Yeniden → eskiye sırala. Önce kapanis_ts (ms), yoksa 'zaman' metni.
-        def _gec_sirala(i):
-            _kts = i.get("kapanis_ts")
-            if _kts:
-                try:
-                    return int(_kts)
-                except (ValueError, TypeError):
-                    pass
-            try:
-                return int(_dt2.strptime(i.get("zaman", ""), "%d.%m.%Y %H:%M").timestamp() * 1000)
-            except Exception:
-                return 0
-
-        for i in sorted(islemler, key=_gec_sirala, reverse=True):
+        for i in islemler:   # zaten yeni→eski sıralı
             kz = float(i.get("kar_zarar", 0))
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
             kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
@@ -870,8 +902,10 @@ elif sayfa == "📋 İşlem Geçmişi":
                 <div style="font-size:11px;color:#555;">{i.get('zaman','')}</div>
                 <span class="badge badge-{'acik' if i.get('durum')=='ACIK' else 'kapali'}">{i.get('durum','N/A')}</span></div>
             </div>""", unsafe_allow_html=True)
+    elif _tum:
+        st.info("Seçili tarih aralığında işlem yok. Aralığı genişletin veya '📥 OKX'ten Çek' ile bu aralığı çekin.")
     else:
-        st.info("Henüz işlem geçmişi yok.")
+        st.info("Kayıtlı işlem yok. '📥 OKX'ten Çek' ile seçtiğiniz tarih aralığındaki işlemleri getirin.")
 
 # ── TP/SL ANALİZİ (izole modül) ─────────────────────────────────
 # 'okx_tpsl_analyzer' aracı AYRI BİR ALT SÜREÇ (subprocess) olarak çalışır; botun
