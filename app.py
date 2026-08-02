@@ -828,133 +828,267 @@ elif sayfa == "📋 İşlem Geçmişi":
         st.info("Henüz işlem geçmişi yok.")
 
 # ── TP/SL ANALİZİ (izole modül) ─────────────────────────────────
-# Bu sayfa 'okx_tpsl_analyzer' aracını AYRI BİR ALT SÜREÇ (subprocess) olarak
-# çalıştırır. Botun karar/emir koduyla hiçbir bağlantısı yoktur; sadece OKX'ten
-# geçmiş pozisyonları OKUR ve TP/SL isabetini analiz eden bir rapor üretir.
-# Neden import değil de subprocess: aracın ağır bağımlılıkları (numpy, matplotlib,
-# pyarrow...) panel süreciyle çakışıp paneli çökertemesin diye tam izolasyon.
+# 'okx_tpsl_analyzer' aracı AYRI BİR ALT SÜREÇ (subprocess) olarak çalışır; botun
+# karar/emir koduyla hiçbir bağlantısı yoktur, sadece OKX'ten geçmişi OKUR.
+# Sonuçlar GitHub'a (analiz_gecmisi.json) KALICI kaydedilir; panel açıldığında en
+# son analiz otomatik gösterilir — kullanıcı butona basmak zorunda değildir.
 elif sayfa == "📉 TP/SL Analizi":
     import os as _os
     import sys as _sys
+    import json as _json
     import subprocess as _subprocess
     from pathlib import Path as _Path
+    from datetime import datetime as _dt, timezone as _tz
+    import pandas as _pd
     import streamlit.components.v1 as _components
 
     st.markdown("## 📉 TP/SL İsabet Analizi")
-    st.caption("Kapanmış pozisyonlarınızı OKX'ten çekip TP/SL seviyelerinin isabetini "
-               "(MFE/MAE) geriye dönük ölçer. Salt-okuma — emir vermez, ayar değiştirmez.")
+    st.caption("Mevcut TP/SL ayarınız geçmiş işlemlerde kârlı mı çalışmış? Bu sayfa OKX'teki "
+               "kapanmış pozisyonları okuyup bunu ölçer. Sadece okur — emir vermez, ayar değiştirmez.")
 
-    # Analiz aracının klasörünü esnek şekilde bul (yerel + deploy senaryoları).
+    # ---- KALICI SAKLAMA: config.json / islem_gecmisi.json ile AYNI yöntem (GitHub) ----
+    def _analiz_gecmisi_oku():
+        veri, _ = gh_oku("analiz_gecmisi.json")
+        return veri.get("analizler", []) if isinstance(veri, dict) else []
+
+    def _analiz_gecmisi_kaydet(snapshot):
+        veri, sha = gh_oku("analiz_gecmisi.json")
+        analizler = veri.get("analizler", []) if isinstance(veri, dict) else []
+        analizler.append(snapshot)
+        analizler = analizler[-5:]              # son 5 analizi tut (dosya şişmesin)
+        return gh_yaz("analiz_gecmisi.json", {"analizler": analizler}, sha)
+
+    # ---- Analiz aracının klasörü (yerel + deploy) ----
     _buradan = _Path(__file__).resolve().parent
-    _adaylar = [
-        _buradan / "okx_tpsl_analyzer",           # repo içine kopyalandıysa (deploy)
-        _buradan.parent / "okx_tpsl_analyzer",    # yerel: bir üst klasörde
-    ]
+    _adaylar = [_buradan / "okx_tpsl_analyzer", _buradan.parent / "okx_tpsl_analyzer"]
     _analiz_dizini = next((p for p in _adaylar if (p / "main.py").exists()), None)
 
-    if _analiz_dizini is None:
-        st.warning(
-            "⚠️ `okx_tpsl_analyzer` klasörü bulunamadı.\n\n"
-            "Bu sekmenin **canlı panelde** çalışması için `okx_tpsl_analyzer` klasörünün "
-            "panel deposuna (ai-koalisyon) eklenmesi ve `requirements.txt`'e aracın "
-            "bağımlılıklarının yazılması gerekir. Yerelde ise klasör panelin bir üstünde olmalı."
-        )
+    # ---- Çıktı dosyalarından KOMPAKT snapshot üret (kalıcı kaydedilecek) ----
+    def _sheet(xlsx_path, name, cols=None, limit=None):
+        try:
+            s = _pd.read_excel(xlsx_path, sheet_name=name)
+            if cols:
+                s = s[[c for c in cols if c in s.columns]]
+            if limit:
+                s = s.head(limit)
+            return _json.loads(s.to_json(orient="records"))   # NaN -> null
+        except Exception:
+            return []
+
+    def _snapshot_uret(cikti_dizini, period, demo):
+        df = _pd.read_csv(cikti_dizini / "trades.csv")
+        xlsx = cikti_dizini / "analysis.xlsx"
+        N = int(len(df))
+        pnl = _pd.to_numeric(df.get("realizedPnl"), errors="coerce")
+        win = int((pnl > 0).sum())
+        loss = int((pnl < 0).sum())
+        reasons = {}
+        if "closeReason" in df.columns:
+            reasons = {str(k): int(v) for k, v in df["closeReason"].value_counts().items()}
+        whatif = _sheet(xlsx, "whatif",
+                        ["tp_mult", "sl_mult", "trades", "timeout_%", "win_rate_%",
+                         "expectancy_R", "resolved_expectancy_R", "profit_factor", "reliable"], limit=12)
+        return {
+            "zaman": _dt.now(_tz.utc).strftime("%d.%m.%Y %H:%M UTC"),
+            "period": period, "demo": bool(demo),
+            "N": N, "win": win, "loss": loss, "pnl_sum": round(float(pnl.fillna(0).sum()), 4),
+            "close_reasons": reasons,
+            "tp_sweep": _sheet(xlsx, "tp_sweep", ["tp_target_R", "hit_rate_%", "expectancy_R"]),
+            "whatif": whatif,
+            "recommendations": _sheet(xlsx, "recommendations"),
+            "distributions": _sheet(xlsx, "distributions"),
+            "reliable_any": any(bool(r.get("reliable")) for r in whatif),
+        }
+
+    # ---- KOŞTURMA (expander içinde — ana ekranı kalabalıklaştırmasın) ----
+    with st.expander("⚙️ Yeni analiz çalıştır / yeniden hesapla",
+                     expanded=(len(_analiz_gecmisi_oku()) == 0)):
+        if _analiz_dizini is None:
+            st.warning("⚠️ `okx_tpsl_analyzer` klasörü bulunamadı. Canlı panelde çalışması için "
+                       "klasörün panel deposuna (ai-koalisyon) eklenmiş olması gerekir.")
+        else:
+            col_s, col_e = st.columns(2)
+            _bas = col_s.date_input("Başlangıç", value=None, key="tpsl_bas",
+                                    help="Boş = son ~89 gün. OKX yalnızca son 3 ayı verir.")
+            _bit = col_e.date_input("Bitiş", value=None, key="tpsl_bit")
+            _semboller = st.text_input("Semboller (opsiyonel)", key="tpsl_sym",
+                                       placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
+            _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle dene)", key="tpsl_demo")
+
+            if st.button("▶ Analiz Et (yeniden hesapla)", type="primary"):
+                _env = dict(_os.environ)
+                try:
+                    _env["OKX_API_KEY"] = st.secrets["OKX_API_KEY"]
+                    _env["OKX_API_SECRET"] = st.secrets["OKX_SECRET_KEY"]      # ad eşleştirmesi
+                    _env["OKX_API_PASSPHRASE"] = st.secrets["OKX_PASSPHRASE"]  # ad eşleştirmesi
+                except Exception:
+                    if not _demo:
+                        st.error("OKX anahtarları panel secrets'ında eksik. Demo modunu deneyin.")
+                        st.stop()
+
+                _komut = [_sys.executable, "main.py"]
+                _period = ["", ""]
+                if _demo:
+                    _komut.append("--demo")
+                else:
+                    if _bas:
+                        _komut += ["--start", _bas.strftime("%Y-%m-%d")]; _period[0] = _bas.strftime("%Y-%m-%d")
+                    if _bit:
+                        _komut += ["--end", _bit.strftime("%Y-%m-%d")]; _period[1] = _bit.strftime("%Y-%m-%d")
+                    if _semboller.strip():
+                        _komut += ["--symbols", _semboller.strip()]
+
+                with st.spinner("Analiz çalışıyor... (mum verisi çekildiği için 1-3 dakika sürebilir)"):
+                    try:
+                        _sonuc = _subprocess.run(_komut, cwd=str(_analiz_dizini), env=_env,
+                                                 capture_output=True, text=True, timeout=600)
+                    except _subprocess.TimeoutExpired:
+                        st.error("⏱ Analiz 10 dakikada bitmedi. Daha dar bir tarih aralığı deneyin.")
+                        st.stop()
+
+                st.session_state["tpsl_stdout"] = _sonuc.stdout
+                st.session_state["tpsl_stderr"] = _sonuc.stderr
+                if _sonuc.returncode != 0:
+                    st.error(f"Analiz hata ile bitti (çıkış kodu {_sonuc.returncode}).")
+                    with st.expander("Hata ayrıntısı"):
+                        st.code(_sonuc.stderr or "(boş)", language="text")
+                else:
+                    try:
+                        _snap = _snapshot_uret(_analiz_dizini / "output", _period, _demo)
+                        if _analiz_gecmisi_kaydet(_snap):
+                            st.session_state["tpsl_taze"] = True   # bu oturumda tam HTML/Excel mevcut
+                            st.success("✅ Analiz tamamlandı ve kalıcı olarak kaydedildi.")
+                            st.rerun()
+                        else:
+                            st.warning("Analiz çalıştı ama GitHub'a kaydedilemedi (aşağıda gösteriliyor, kalıcı değil).")
+                            st.session_state["tpsl_gecici"] = _snap
+                    except Exception as _e:
+                        st.error(f"Sonuç özeti çıkarılamadı: {_e}")
+
+    # ================= GÖRÜNTÜLEME (kullanıcı butona basmasa da) =================
+    _analizler = _analiz_gecmisi_oku()
+    if not _analizler and st.session_state.get("tpsl_gecici"):
+        _analizler = [st.session_state["tpsl_gecici"]]   # kaydedilemedi ama gösterelim
+
+    if not _analizler:
+        st.info("Henüz kayıtlı analiz yok. Yukarıdaki **⚙️ Yeni analiz çalıştır** bölümünden "
+                "ilk analizi başlatın (denemek için 'Demo modu' yeterli).")
         st.stop()
 
-    col_s, col_e = st.columns(2)
-    with col_s:
-        _bas = st.date_input("Başlangıç", value=None, key="tpsl_bas",
-                             help="Boş bırakılırsa son ~89 gün. OKX sadece son 3 ayı verir.")
-    with col_e:
-        _bit = st.date_input("Bitiş", value=None, key="tpsl_bit")
-    _semboller = st.text_input("Semboller (opsiyonel)", key="tpsl_sym",
-                               placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
-    _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle raporu göster)", key="tpsl_demo")
+    # Geçmiş analiz seçici (en yeni varsayılan)
+    _etiket = lambda i: _analizler[i]["zaman"] + (" · demo" if _analizler[i].get("demo") else "")
+    _sirali = list(reversed(range(len(_analizler))))
+    _idx = st.selectbox("Gösterilen analiz", _sirali, format_func=_etiket)
+    A = _analizler[_idx]
+    N = int(A.get("N", 0))
 
-    if st.button("▶ Analizi Çalıştır", type="primary"):
-        # Aracın beklediği ortam değişkeni adları paneldekilerden FARKLI; eşleştiriyoruz.
-        _env = dict(_os.environ)
+    # ---- KÜÇÜK ÖRNEKLEM UYARISI (göze çarpan banner) ----
+    if N < 30:
+        st.error(f"⚠️ Bu analiz yalnızca **{N} işleme** dayanıyor. Güvenilir kabul etmeden önce "
+                 f"en az **30-50 işlem** birikmesini bekleyin. Aşağıdaki sonuçlar fikir verir, "
+                 f"ama istatistiksel olarak kesin değildir.")
+
+    # ---- KATMAN 1: TEK ÖZET KART ----
+    _pnl = float(A.get("pnl_sum", 0.0))
+    _win, _loss = int(A.get("win", 0)), int(A.get("loss", 0))
+    if N < 30:
+        _bg, _bd, _ikon, _durum = "#FCF3E1", "#E0A800", "🟡", "belirsiz (veri az)"
+    elif _pnl > 0:
+        _bg, _bd, _ikon, _durum = "#E1F5EE", "#1D9E75", "🟢", "KÂRDA"
+    else:
+        _bg, _bd, _ikon, _durum = "#FCEBEB", "#E24B4A", "🔴", "ZARARDA"
+    _cumle = (f"Son <b>{N} işlemde</b> mevcut TP/SL ayarınız ortalama <b>{_durum}</b> "
+              f"(toplam {_pnl:+.2f} USDT · {_win} kazanan / {_loss} kaybeden). "
+              + ("⚠️ Veri az (30'un altında), kesin sonuç sayılmaz."
+                 if N < 30 else "Veri miktarı bir fikir vermeye yeterli."))
+    st.markdown(
+        f"<div style='background:{_bg};border-left:5px solid {_bd};border-radius:10px;"
+        f"padding:14px 18px;margin:6px 0 14px;'>"
+        f"<div style='font-size:13px;color:#333;line-height:1.5;'>{_ikon} {_cumle}</div></div>",
+        unsafe_allow_html=True)
+
+    # ---- KATMAN 2: 3-4 BASİT GÖRSEL ----
+    st.markdown("### 📊 Özet Görseller")
+    _g1, _g2 = st.columns(2)
+    with _g1:
+        st.caption("Kazanan / Kaybeden işlem sayısı")
+        st.bar_chart(_pd.DataFrame({"İşlem": [_win, _loss]}, index=["Kazanan", "Kaybeden"]),
+                     color="#7F77DD")
+    with _g2:
+        st.caption("Kapanış nedeni")
+        _cr = A.get("close_reasons", {})
+        if _cr:
+            _ceviri = {"TP_HIT": "Kâr al (TP)", "SL_HIT": "Zarar durdur (SL)", "MANUAL": "Manuel",
+                       "LIQUIDATION": "Likidasyon", "ADL": "ADL", "UNKNOWN": "Bilinmiyor"}
+            st.bar_chart(_pd.DataFrame({"Adet": list(_cr.values())},
+                                       index=[_ceviri.get(k, k) for k in _cr]), color="#534AB7")
+        else:
+            st.caption("Veri yok.")
+
+    _ts = A.get("tp_sweep", [])
+    if _ts:
+        st.caption("İsabet oranı (hit rate), TP hedefi uzadıkça nasıl düşüyor — "
+                   "hedef ne kadar uzaksa fiyat oraya o kadar seyrek ulaşır")
+        _tsdf = _pd.DataFrame(_ts)
+        if "tp_target_R" in _tsdf and "hit_rate_%" in _tsdf:
+            st.line_chart(_tsdf.set_index("tp_target_R")["hit_rate_%"])
+
+    _wf = A.get("whatif", [])
+    if _wf:
+        _wdf = _pd.DataFrame(_wf)
         try:
-            _env["OKX_API_KEY"] = st.secrets["OKX_API_KEY"]
-            _env["OKX_API_SECRET"] = st.secrets["OKX_SECRET_KEY"]      # panel: OKX_SECRET_KEY
-            _env["OKX_API_PASSPHRASE"] = st.secrets["OKX_PASSPHRASE"]  # panel: OKX_PASSPHRASE
+            _cur = _wdf[(_wdf["tp_mult"] == 1.0) & (_wdf["sl_mult"] == 1.0)]
+            _rel = _wdf[_wdf["reliable"] == True]
+            _pool = _rel if not _rel.empty else _wdf
+            _best = _pool.loc[_pool["expectancy_R"].idxmax()]
+            st.caption("Mevcut ayar vs en iyi alternatif — “1 birim risk başına ortalama "
+                       "kazanç” (expectancy) ne kadar yüksekse o kadar iyi")
+            _m1, _m2 = st.columns(2)
+            _cur_e = float(_cur["expectancy_R"].iloc[0]) if not _cur.empty else float("nan")
+            _m1.metric("Mevcut ayarınız", f"{_cur_e:+.2f}" if _cur_e == _cur_e else "—",
+                       help="1 birim risk başına ortalama kazanç (expectancy_R)")
+            _m2.metric(f"Öneri: TP ×{_best['tp_mult']} / SL ×{_best['sl_mult']}",
+                       f"{float(_best['expectancy_R']):+.2f}",
+                       delta=(f"{float(_best['expectancy_R']) - _cur_e:+.2f}" if _cur_e == _cur_e else None),
+                       help="Alternatif TP/SL çarpanlarının geçmişte verdiği ortalama sonuç")
+            if not bool(_best.get("reliable", False)):
+                st.caption("⚠️ En iyi senaryo bile 'yetersiz veri' rozetli — kesin öneri sayılmaz.")
         except Exception:
-            if not _demo:
-                st.error("OKX anahtarları panel secrets'ında eksik. Demo modunu deneyin.")
-                st.stop()
+            pass
 
-        _komut = [_sys.executable, "main.py"]
-        if _demo:
-            _komut.append("--demo")
-        else:
-            if _bas:
-                _komut += ["--start", _bas.strftime("%Y-%m-%d")]
-            if _bit:
-                _komut += ["--end", _bit.strftime("%Y-%m-%d")]
-            if _semboller.strip():
-                _komut += ["--symbols", _semboller.strip()]
+    # ---- KATMAN 3: KATLANABİLİR TEKNİK DETAYLAR (varsayılan kapalı) ----
+    with st.expander("🔧 Teknik Detaylar (ham tablolar)"):
+        st.markdown("**Alternatif TP/SL senaryoları** (whatif)")
+        st.caption("tp_mult/sl_mult: mevcut TP/SL'nin kaç katı · expectancy_R: 1 birim risk başına "
+                   "ort. kazanç · reliable: yeterli veri var mı")
+        if A.get("whatif"): st.dataframe(_pd.DataFrame(A["whatif"]), use_container_width=True)
+        st.markdown("**TP hedefi taraması** (tp_sweep)")
+        if A.get("tp_sweep"): st.dataframe(_pd.DataFrame(A["tp_sweep"]), use_container_width=True)
+        st.markdown("**Öneriler** (recommendations)")
+        if A.get("recommendations"): st.dataframe(_pd.DataFrame(A["recommendations"]), use_container_width=True)
+        st.markdown("**Dağılımlar** (distributions)")
+        if A.get("distributions"): st.dataframe(_pd.DataFrame(A["distributions"]), use_container_width=True)
 
-        with st.spinner("Analiz çalışıyor... (mum verisi çekildiği için 1-3 dakika sürebilir)"):
-            try:
-                _sonuc = _subprocess.run(
-                    _komut, cwd=str(_analiz_dizini), env=_env,
-                    capture_output=True, text=True, timeout=600,
-                )
-            except _subprocess.TimeoutExpired:
-                st.error("⏱ Analiz 10 dakikada bitmedi, durduruldu. Daha dar bir tarih aralığı deneyin.")
-                st.stop()
-
-        # Çıktıyı sakla (rerun'da kaybolmasın)
-        st.session_state["tpsl_stdout"] = _sonuc.stdout
-        st.session_state["tpsl_stderr"] = _sonuc.stderr
-        st.session_state["tpsl_rc"] = _sonuc.returncode
-
-    # ---- Sonuçları göster ----
-    if "tpsl_rc" in st.session_state:
-        _rc = st.session_state["tpsl_rc"]
-        if _rc != 0:
-            st.error(f"Analiz hata ile bitti (çıkış kodu {_rc}).")
-            if st.session_state.get("tpsl_stderr"):
-                with st.expander("Hata ayrıntısı"):
-                    st.code(st.session_state["tpsl_stderr"], language="text")
-        else:
-            st.success("✅ Analiz tamamlandı.")
-
-        _cikti_dizini = _analiz_dizini / "output"
-        _rapor = _cikti_dizini / "report.html"
-        _trades = _cikti_dizini / "trades.csv"
-        _xlsx = _cikti_dizini / "analysis.xlsx"
-
-        # 1) HTML raporu göm
-        if _rapor.exists():
-            st.markdown("#### 📊 Rapor")
-            try:
-                _components.html(_rapor.read_text(encoding="utf-8"),
-                                 height=900, scrolling=True)
-            except Exception as _e:
-                st.warning(f"Rapor gömülemedi: {_e}")
-
-        # 2) İşlem tablosu
-        if _trades.exists():
-            st.markdown("#### 📋 İşlem Tablosu")
-            try:
-                import pandas as _pd
-                _df = _pd.read_csv(_trades)
-                st.dataframe(_df, use_container_width=True, height=300)
-            except Exception as _e:
-                st.caption(f"Tablo okunamadı: {_e}")
-
-        # 3) Excel indirme
-        if _xlsx.exists():
-            with open(_xlsx, "rb") as _f:
-                st.download_button("⬇️ Excel raporu (7 sayfa) indir", _f.read(),
+        # Tam HTML rapor + Excel yalnızca YENİ çalıştırılan oturumda mevcut (dosyalar ephemeral)
+        if st.session_state.get("tpsl_taze") and _analiz_dizini:
+            _rapor = _analiz_dizini / "output" / "report.html"
+            _xlsx = _analiz_dizini / "output" / "analysis.xlsx"
+            if _rapor.exists():
+                st.markdown("**Tam grafikli HTML rapor (bu oturum):**")
+                try:
+                    _components.html(_rapor.read_text(encoding="utf-8"), height=600, scrolling=True)
+                except Exception:
+                    pass
+            if _xlsx.exists():
+                st.download_button("⬇️ Excel raporu (7 sayfa)", _xlsx.read_bytes(),
                                    file_name="tpsl_analysis.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        # 4) Konsol çıktısı (özet + uyarılar)
+        else:
+            st.caption("ℹ️ Tam grafikli HTML rapor ve Excel indirmesi, yalnızca yukarıdan yeni bir "
+                       "analiz çalıştırdığınız oturumda görünür (bu dosyalar kalıcı saklanmaz).")
         if st.session_state.get("tpsl_stdout"):
-            with st.expander("🖥 Konsol çıktısı (özet, kapanış nedenleri, öneriler)"):
-                st.code(st.session_state["tpsl_stdout"], language="text")
+            st.markdown("**Konsol çıktısı**")
+            st.code(st.session_state["tpsl_stdout"], language="text")
 
 # ── KOALİSYON DANIŞMA ───────────────────────────────────────────
 elif sayfa == "💬 Koalisyon Danışma":
