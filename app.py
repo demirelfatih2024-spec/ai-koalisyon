@@ -583,6 +583,48 @@ def _araligda_filtrele(islemler, bas_ms, bit_ms):
            if (_islem_zaman_ms(i) is None) or (bas_ms <= _islem_zaman_ms(i) <= bit_ms)]
     return sorted(out, key=lambda i: (_islem_zaman_ms(i) or 0), reverse=True)
 
+def okx_pozisyon_tpsl():
+    """
+    Açık pozisyonlara bağlı BEKLEYEN TP/SL (algo/OCO) emirlerini OKX'ten çeker.
+    TP/SL, pozisyon nesnesinde DEĞİL ayrı algo emirlerinde durur; bu yüzden
+    /trade/orders-algo-pending uçundan okunur.
+    Dönüş: { 'SNXX-USDT-SWAP': {'tp': '10.31', 'sl': '9.02'}, ... }
+    """
+    import time, hmac, hashlib
+    sonuc = {}
+    try:
+        for ord_type in ("oco", "conditional"):
+            request_path = f"/api/v5/trade/orders-algo-pending?ordType={ord_type}"
+            timestamp = str(time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())) + '.000Z'
+            message = timestamp + 'GET' + request_path
+            signature = base64.b64encode(
+                hmac.new(OKX_SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
+            ).decode()
+            headers = {
+                'OK-ACCESS-KEY': OKX_API_KEY,
+                'OK-ACCESS-SIGN': signature,
+                'OK-ACCESS-TIMESTAMP': timestamp,
+                'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,
+                'Content-Type': 'application/json',
+            }
+            r = requests.get('https://www.okx.com' + request_path, headers=headers, timeout=10)
+            if r.status_code != 200:
+                continue
+            for o in r.json().get("data", []):
+                inst = o.get("instId")
+                if not inst:
+                    continue
+                kayit = sonuc.setdefault(inst, {"tp": "", "sl": ""})
+                tp = o.get("tpTriggerPx") or ""
+                sl = o.get("slTriggerPx") or ""
+                if tp and not kayit["tp"]:
+                    kayit["tp"] = tp
+                if sl and not kayit["sl"]:
+                    kayit["sl"] = sl
+    except Exception as e:
+        print(f"TP/SL algo okuma hatası: {e}")
+    return sonuc
+
 # ── DASHBOARD ──────────────────────────────────────────────────
 if sayfa == "📊 Dashboard":
     col_baslik, col_buton, col_yenile = st.columns([4, 1, 1])
@@ -648,6 +690,8 @@ if sayfa == "📊 Dashboard":
         exchange_poz = ccxt.okx({'apiKey': OKX_API_KEY, 'secret': OKX_SECRET_KEY, 'password': OKX_PASSPHRASE})
         pozisyonlar = exchange_poz.fetch_positions()
         acik_pozlar = [p for p in pozisyonlar if p['contracts'] and float(p['contracts']) > 0]
+        # Açık pozisyonlara bağlı bekleyen TP/SL algo emirlerini bir kez çek.
+        _tpsl_map = okx_pozisyon_tpsl()
         if acik_pozlar:
             for poz in acik_pozlar:
                 giris = float(poz['entryPrice'] or 0)
@@ -656,6 +700,21 @@ if sayfa == "📊 Dashboard":
                 kar_yuzde = ((anlık - giris) / giris * 100) if giris > 0 else 0
                 kar_renk = "#4caf50" if kar_zarar >= 0 else "#cc4444"
                 kar_isaret = "+" if kar_zarar >= 0 else ""
+
+                # Pozisyon sembolünü OKX instId'ye çevirip TP/SL'yi eşleştir.
+                _inst = poz['symbol'].replace('/USDT:USDT', '-USDT-SWAP').replace('/', '-')
+                _ts = _tpsl_map.get(_inst, {})
+                _tp_px, _sl_px = _ts.get("tp", ""), _ts.get("sl", "")
+                if _tp_px or _sl_px:
+                    _tp_gos = _tp_px if _tp_px else "yok"
+                    _sl_gos = _sl_px if _sl_px else "yok"
+                    _koruma_html = (f"<div style='font-size:11px;margin-top:3px;'>"
+                                    f"<span style='color:#0F6E56;'>🎯 TP: {_tp_gos}</span> · "
+                                    f"<span style='color:#A32D2D;'>🛑 SL: {_sl_gos}</span></div>")
+                else:
+                    _koruma_html = ("<div style='font-size:11px;margin-top:3px;color:#A32D2D;"
+                                    "font-weight:600;'>⚠️ TP/SL YOK — pozisyon korumasız</div>")
+
                 col_poz, col_kapat = st.columns([4, 1])
                 with col_poz:
                     poz_yon = poz['side'].upper()
@@ -670,6 +729,7 @@ if sayfa == "📊 Dashboard":
                                 <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">{poz['symbol']} <span class="badge {badge_class}">{poz_yon} {poz['leverage']}x</span></div>
                                 <div style="font-size:11px;color:var(--color-text-tertiary);margin-top:3px;">Giriş: {giris} · Anlık: {anlık} · Miktar: {poz['contracts']}</div>
                                 <div style="margin-top:4px;font-size:13px;font-weight:500;color:{kar_renk};">{kar_isaret}${kar_zarar:.4f} ({kar_isaret}{kar_yuzde:.2f}%)</div>
+                                {_koruma_html}
                             </div>
                         </div>
                     </div>""", unsafe_allow_html=True)
