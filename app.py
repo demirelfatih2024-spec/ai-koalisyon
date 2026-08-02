@@ -311,7 +311,8 @@ def okx_gecmis_islemleri_ice_aktar():
                              'options': {'defaultType': 'swap'}})
         kapananlar = []
         try:
-            kapananlar = exchange.fetch_positions_history(None, limit=20)
+            # limit=100: OKX'in tek istekte verdiği azami. Daha fazla recovery için.
+            kapananlar = exchange.fetch_positions_history(None, limit=100)
         except Exception:
             pass
 
@@ -320,7 +321,7 @@ def okx_gecmis_islemleri_ice_aktar():
             try:
                 import time, hashlib, hmac
                 timestamp = str(time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())) + '.000Z'
-                request_path = '/api/v5/account/positions-history?instType=SWAP&limit=20'
+                request_path = '/api/v5/account/positions-history?instType=SWAP&limit=100'
                 message = timestamp + 'GET' + request_path
                 signature = base64.b64encode(
                     hmac.new(OKX_SECRET_KEY.encode(), message.encode(), hashlib.sha256).digest()
@@ -346,9 +347,17 @@ def okx_gecmis_islemleri_ice_aktar():
             gecmis = {"islemler": []}
             sha = None
         islemler = gecmis.get("islemler", [])
-        # Sembol bazlı tekilleştirme aynı sembolün farklı işlemlerini tek kayda
-        # indirip PnL'leri karıştırıyordu. Artık benzersiz posId'ye göre tekilleştiriyoruz.
-        mevcut_posidler = {i.get("pos_id") for i in islemler if i.get("pos_id")}
+        # KRİTİK: OKX aynı 'posId'yi, aynı sembolde art arda açılan farklı pozisyonlar
+        # için TEKRAR kullanabiliyor (kanıt: SNXX LONG ve SHORT ikisi de posId
+        # 3794575046693298178). Bu yüzden posId TEK BAŞINA benzersiz DEĞİL.
+        # Analiz aracının (_dedupe_positions) doğru mantığıyla hizalıyoruz:
+        # benzersiz anahtar = posId + kapanış zaman damgası (uTime).
+        def _anahtar(pid, kts):
+            return f"{pid}:{kts}"
+        mevcut_anahtarlar = {
+            _anahtar(i.get("pos_id"), i.get("kapanis_ts"))
+            for i in islemler if i.get("pos_id")
+        }
         eklenen_sayisi = 0
 
         for p in kapananlar:
@@ -364,18 +373,21 @@ def okx_gecmis_islemleri_ice_aktar():
             kaldirac = str(info.get("lever") or p.get("leverage") or 1)
             yon = "LONG" if (p.get("side") == "long" or info.get("direction") == "long") else "SHORT"
 
-            ts = info.get("uTime") or info.get("cTime") or p.get("timestamp")
-            if ts:
+            # Ham kapanış zaman damgası: hem benzersiz anahtarın parçası hem gösterim.
+            kapanis_ts = str(info.get("uTime") or info.get("cTime") or p.get("timestamp") or "")
+            if kapanis_ts:
                 try:
-                    zaman_str = datetime.fromtimestamp(int(ts)/1000).strftime("%d.%m.%Y %H:%M")
-                except:
+                    zaman_str = datetime.fromtimestamp(int(kapanis_ts)/1000).strftime("%d.%m.%Y %H:%M")
+                except Exception:
                     zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
             else:
                 zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
 
             pos_id = str(info.get("posId") or "")
-            # Kimliklendirilemeyen veya zaten kayıtlı pozisyonu tekrar EKLEME/EZME.
-            if not pos_id or pos_id in mevcut_posidler:
+            anahtar = _anahtar(pos_id, kapanis_ts)
+            # Kimliklendirilemeyen veya bu (posId+uTime) kombinasyonu zaten kayıtlıysa atla.
+            # posId aynı olsa bile farklı uTime → FARKLI pozisyon, eklenir.
+            if not pos_id or anahtar in mevcut_anahtarlar:
                 continue
 
             islemler.append({
@@ -387,9 +399,10 @@ def okx_gecmis_islemleri_ice_aktar():
                 "kaldirac": kaldirac,
                 "kar_zarar": round(kz, 4),
                 "pos_id": pos_id,
+                "kapanis_ts": kapanis_ts,  # benzersiz anahtarın ikinci parçası
                 "zaman": zaman_str
             })
-            mevcut_posidler.add(pos_id)
+            mevcut_anahtarlar.add(anahtar)
             eklenen_sayisi += 1
 
         # Sadece gerçekten yeni kayıt varsa yaz (her yenilemede boşuna commit atma).
