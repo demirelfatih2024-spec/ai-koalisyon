@@ -3,7 +3,7 @@ import asyncio
 import json
 import base64
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="Trading Kontrol Paneli", page_icon="⚡", layout="wide")
 
@@ -383,11 +383,11 @@ def okx_gecmis_islemleri_ice_aktar(bas_ms=None, bit_ms=None):
             kapanis_ts = str(info.get("uTime") or info.get("cTime") or p.get("timestamp") or "")
             if kapanis_ts:
                 try:
-                    zaman_str = datetime.fromtimestamp(int(kapanis_ts)/1000).strftime("%d.%m.%Y %H:%M")
+                    zaman_str = datetime.fromtimestamp(int(kapanis_ts)/1000, timezone.utc).strftime("%d.%m.%Y %H:%M")
                 except Exception:
-                    zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+                    zaman_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
             else:
-                zaman_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+                zaman_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
 
             # Tarih aralığı filtresi (kullanıcı seçtiyse): aralık dışını atla.
             try:
@@ -570,9 +570,12 @@ def _islem_zaman_ms(islem):
             return int(kts)
         except (ValueError, TypeError):
             pass
-    from datetime import datetime as _d
+    from datetime import datetime as _d, timezone as _z
     try:
-        return int(_d.strptime(islem.get("zaman", ""), "%d.%m.%Y %H:%M").timestamp() * 1000)
+        # 'zaman' metni UTC olarak saklanır (bot tarafı UTC yazar) — naive .timestamp()
+        # sunucu yereline göre yorumlar; açıkça UTC olarak sabitliyoruz (Madde 3).
+        return int(_d.strptime(islem.get("zaman", ""), "%d.%m.%Y %H:%M")
+                   .replace(tzinfo=_z.utc).timestamp() * 1000)
     except Exception:
         return None
 
@@ -582,6 +585,21 @@ def _araligda_filtrele(islemler, bas_ms, bit_ms):
     out = [i for i in islemler
            if (_islem_zaman_ms(i) is None) or (bas_ms <= _islem_zaman_ms(i) <= bit_ms)]
     return sorted(out, key=lambda i: (_islem_zaman_ms(i) or 0), reverse=True)
+
+def _trt_goster(islem):
+    """
+    İşlem zamanını kullanıcıya TRT (UTC+3) olarak, açık etiketle gösterir (Madde 3).
+    İç veri UTC'dir; sadece GÖSTERİM burada TR saatine çevrilir.
+    """
+    from datetime import datetime as _d, timezone as _z, timedelta as _t
+    ms = _islem_zaman_ms(islem)   # UTC ms epoch (kapanis_ts veya UTC 'zaman' metninden)
+    if ms is None:
+        return islem.get("zaman", "")
+    try:
+        dt_trt = _d.fromtimestamp(ms / 1000, _z.utc) + _t(hours=3)
+        return dt_trt.strftime("%d.%m.%Y %H:%M") + " TRT"
+    except Exception:
+        return islem.get("zaman", "")
 
 def okx_pozisyon_tpsl():
     """
@@ -789,7 +807,7 @@ if sayfa == "📊 Dashboard":
                     <div class="cb {cb_cls}" style="width:28px;height:28px;font-size:9px;">{coin_kisa}</div>
                     <div>
                         <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);">{i.get('sembol','N/A')}</div>
-                        <div style="font-size:11px;color:var(--color-text-tertiary);">{i.get('zaman','')}</div>
+                        <div style="font-size:11px;color:var(--color-text-tertiary);">{_trt_goster(i)}</div>
                     </div>
                     <span class="badge {badge_cls}">{yon}</span>
                 </div>
@@ -959,7 +977,7 @@ elif sayfa == "📋 İşlem Geçmişi":
                 <div><div style="font-weight:600;color:#e8e8e8;margin-bottom:4px;">{i.get('sembol','N/A')} — {i.get('tip','spot').upper()} {i.get('yon','LONG')}</div>
                 <div style="font-size:11px;color:#555;">Giriş: {i.get('giris','N/A')} | TP: {i.get('tp','N/A')} | SL: {i.get('sl','N/A')} | Kaldıraç: {i.get('kaldirac',1)}x</div></div>
                 <div style="text-align:right;"><div style="color:{kz_renk};font-weight:600;font-size:16px;">{kz_str}</div>
-                <div style="font-size:11px;color:#555;">{i.get('zaman','')}</div>
+                <div style="font-size:11px;color:#555;">{_trt_goster(i)}</div>
                 <span class="badge badge-{'acik' if i.get('durum')=='ACIK' else 'kapali'}">{i.get('durum','N/A')}</span></div>
             </div>""", unsafe_allow_html=True)
     elif _tum:
