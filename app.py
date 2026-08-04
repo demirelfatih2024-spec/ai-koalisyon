@@ -416,6 +416,9 @@ def okx_gecmis_islemleri_ice_aktar(bas_ms=None, bit_ms=None):
                 "kar_zarar": round(kz, 4),
                 "pos_id": pos_id,
                 "kapanis_ts": kapanis_ts,  # benzersiz anahtarın ikinci parçası
+                # GÖREV 0: bu kayıtlar positions-history?instType=SWAP'tan geliyor =
+                # FUTURES. Eskiden 'tip' yazılmadığı için panel bunları 'SPOT' gösteriyordu.
+                "tip": "futures",
                 "zaman": zaman_str
             })
             mevcut_anahtarlar.add(anahtar)
@@ -974,7 +977,7 @@ elif sayfa == "📋 İşlem Geçmişi":
             kz_str = f"+${kz:.2f}" if kz > 0 else f"${kz:.2f}"
             kz_renk = "#4caf50" if kz > 0 else "#cc4444" if kz < 0 else "#888"
             st.markdown(f"""<div class="islem-row">
-                <div><div style="font-weight:600;color:#e8e8e8;margin-bottom:4px;">{i.get('sembol','N/A')} — {i.get('tip','spot').upper()} {i.get('yon','LONG')}</div>
+                <div><div style="font-weight:600;color:#e8e8e8;margin-bottom:4px;">{i.get('sembol','N/A')} — {i.get('tip','futures').upper()} {i.get('yon','LONG')}</div>
                 <div style="font-size:11px;color:#555;">Giriş: {i.get('giris','N/A')} | TP: {i.get('tp','N/A')} | SL: {i.get('sl','N/A')} | Kaldıraç: {i.get('kaldirac',1)}x</div></div>
                 <div style="text-align:right;"><div style="color:{kz_renk};font-weight:600;font-size:16px;">{kz_str}</div>
                 <div style="font-size:11px;color:#555;">{_trt_goster(i)}</div>
