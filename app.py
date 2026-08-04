@@ -1076,16 +1076,8 @@ elif sayfa == "📉 TP/SL Analizi":
             st.warning("⚠️ `okx_tpsl_analyzer` klasörü bulunamadı. Canlı panelde çalışması için "
                        "klasörün panel deposuna (ai-koalisyon) eklenmiş olması gerekir.")
         else:
-            col_s, col_e = st.columns(2)
-            _bas = col_s.date_input("Başlangıç", value=None, key="tpsl_bas",
-                                    help="Boş = son ~89 gün. OKX yalnızca son 3 ayı verir.")
-            _bit = col_e.date_input("Bitiş", value=None, key="tpsl_bit")
-            _semboller = st.text_input("Semboller (opsiyonel)", key="tpsl_sym",
-                                       placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
-            _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle dene)", key="tpsl_demo")
-
-            # GÖREV 1: Kod rejimi seçici. Panelin asıl amacı "ŞU AN kârlı mıyız" olduğu için
-            # varsayılan 'Güncel'. (Güncel örneklemi küçükse boş dönebilir; aşağıda nazik uyarı var.)
+            # GÖREV 2 (sadeleştirme): DOĞRUDAN GÖRÜNEN yalnızca rejim seçici + Analiz Et.
+            # Kod rejimi seçici. Varsayılan 'Güncel' ("şu an kârlı mıyız").
             _REJIM_SECENEK = {
                 "Güncel (tüm düzeltmeler sonrası)": "guncel",
                 "Tüm veri (karşılaştırma için)": "all",
@@ -1096,8 +1088,17 @@ elif sayfa == "📉 TP/SL Analizi":
                 "Hangi kod rejimi gösterilsin?",
                 list(_REJIM_SECENEK.keys()), index=0, key="tpsl_rejim",
                 help="'Güncel' = bugünkü hacim/MACD/BEAT düzeltmeleri yürürlükteyken açılan işlemler "
-                     "('şu an kârlı mıyız'). 'Tüm veri' düzeltme öncesi+sonrasını karıştırır (daha büyük "
-                     "örneklem ama daha az güncel — kıyaslama için).")
+                     "('şu an kârlı mıyız'). 'Tüm veri' düzeltme öncesi+sonrasını karıştırır (kıyaslama için).")
+
+            # GÖREV 2: az kullanılan ayarlar varsayılan KAPALI 'Gelişmiş' bölümünde.
+            with st.expander("🔧 Gelişmiş ayarlar (tarih, sembol, demo)", expanded=False):
+                col_s, col_e = st.columns(2)
+                _bas = col_s.date_input("Başlangıç", value=None, key="tpsl_bas",
+                                        help="Boş = son ~89 gün. OKX yalnızca son 3 ayı verir.")
+                _bit = col_e.date_input("Bitiş", value=None, key="tpsl_bit")
+                _semboller = st.text_input("Semboller (opsiyonel)", key="tpsl_sym",
+                                           placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
+                _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle dene)", key="tpsl_demo")
             _rejim_deger = _REJIM_SECENEK[_rejim_label]
 
             if st.button("▶ Analiz Et (yeniden hesapla)", type="primary"):
@@ -1170,50 +1171,46 @@ elif sayfa == "📉 TP/SL Analizi":
                 "ilk analizi başlatın (denemek için 'Demo modu' yeterli).")
         st.stop()
 
-    # Geçmiş analiz seçici (en yeni varsayılan) — etikette rejim de görünsün
-    _etiket = lambda i: (f"{_analizler[i]['zaman']} · {_analizler[i].get('rejim', 'Tüm veri')}"
-                         + (" · demo" if _analizler[i].get("demo") else ""))
+    # GÖREV 2: Geçmiş analiz seçici YALNIZCA birden fazla kayıt varsa (tek kayıtta gereksiz).
     _sirali = list(reversed(range(len(_analizler))))
-    _idx = st.selectbox("Gösterilen analiz", _sirali, format_func=_etiket)
+    if len(_analizler) > 1:
+        _etiket = lambda i: (f"{_analizler[i]['zaman']} · {_analizler[i].get('rejim', 'Tüm veri')}"
+                             + (" · demo" if _analizler[i].get("demo") else ""))
+        _idx = st.selectbox("Geçmiş analizler", _sirali, format_func=_etiket)
+    else:
+        _idx = _sirali[0]
     A = _analizler[_idx]
     N = int(A.get("N", 0))
-
-    # ---- GÖREV 2: EN ÜSTTE HANGİ REJİM / TARİH / ÖRNEKLEM gösteriliyor ----
-    _rejim_gos = A.get("rejim", "Tüm veri")
-    _per = A.get("period", ["", ""])
-    _tarih_gos = ""
-    if isinstance(_per, (list, tuple)) and (len(_per) == 2) and (_per[0] or _per[1]):
-        _tarih_gos = f" · {_per[0] or '…'} → {_per[1] or 'şimdi'}"
-    st.markdown(
-        f"<div style='background:#EEF0FF;border:1px solid #7F77DD;border-radius:10px;"
-        f"padding:10px 16px;margin-bottom:10px;'>"
-        f"<span style='font-size:16px;font-weight:700;color:#3A2FA0;'>🧭 {_rejim_gos}</span>"
-        f"<span style='font-size:14px;color:#333;'> — <b>{N} işlem</b>{_tarih_gos}</span></div>",
-        unsafe_allow_html=True)
-
-    # ---- KÜÇÜK ÖRNEKLEM UYARISI (göze çarpan banner) ----
-    if N < 30:
-        st.error(f"⚠️ Bu analiz yalnızca **{N} işleme** dayanıyor. Güvenilir kabul etmeden önce "
-                 f"en az **30-50 işlem** birikmesini bekleyin. Aşağıdaki sonuçlar fikir verir, "
-                 f"ama istatistiksel olarak kesin değildir.")
-
-    # ---- KATMAN 1: TEK ÖZET KART ----
     _pnl = float(A.get("pnl_sum", 0.0))
     _win, _loss = int(A.get("win", 0)), int(A.get("loss", 0))
-    if N < 30:
-        _bg, _bd, _ikon, _durum = "#FCF3E1", "#E0A800", "🟡", "belirsiz (veri az)"
+    _isabet = (100 * _win / (_win + _loss)) if (_win + _loss) > 0 else 0.0
+    _rejim_gos = A.get("rejim", "Tüm veri")
+    _per = A.get("period", ["", ""])
+    if isinstance(_per, (list, tuple)) and len(_per) == 2 and (_per[0] or _per[1]):
+        _tarih_gos = f"{_per[0] or '…'} → {_per[1] or 'şimdi'}"
+    else:
+        _tarih_gos = "son ~89 gün"
+
+    # ---- GÖREV 2: TEK KONSOLİDE ÖZET KART (rejim · N · tarih · PnL · isabet) ----
+    # Tüm sayılar A (rejime göre süzülmüş snapshot) 'tan türer — etiket=veri.
+    _az = N < 30
+    if _az:
+        _bg, _bd, _ikon, _durum = "#FCF3E1", "#E0A800", "🟡", "Belirsiz (veri az)"
     elif _pnl > 0:
         _bg, _bd, _ikon, _durum = "#E1F5EE", "#1D9E75", "🟢", "KÂRDA"
     else:
         _bg, _bd, _ikon, _durum = "#FCEBEB", "#E24B4A", "🔴", "ZARARDA"
-    _cumle = (f"Son <b>{N} işlemde</b> mevcut TP/SL ayarınız ortalama <b>{_durum}</b> "
-              f"(toplam {_pnl:+.2f} USDT · {_win} kazanan / {_loss} kaybeden). "
-              + ("⚠️ Veri az (30'un altında), kesin sonuç sayılmaz."
-                 if N < 30 else "Veri miktarı bir fikir vermeye yeterli."))
+    _pnl_renk = "#0F6E56" if _pnl > 0 else ("#A32D2D" if _pnl < 0 else "#333")
     st.markdown(
-        f"<div style='background:{_bg};border-left:5px solid {_bd};border-radius:10px;"
-        f"padding:14px 18px;margin:6px 0 14px;'>"
-        f"<div style='font-size:13px;color:#333;line-height:1.5;'>{_ikon} {_cumle}</div></div>",
+        f"<div style='background:{_bg};border:1px solid {_bd};border-radius:12px;padding:14px 18px;margin-bottom:12px;'>"
+        f"<div style='font-size:15px;font-weight:700;color:#3A2FA0;margin-bottom:6px;'>"
+        f"🧭 {_rejim_gos} · {N} işlem · {_tarih_gos}</div>"
+        f"<div style='font-size:14px;color:#333;'>{_ikon} <b>{_durum}</b> — "
+        f"Net PnL <b style='color:{_pnl_renk};'>{_pnl:+.2f} USDT</b> · "
+        f"İsabet <b>%{_isabet:.0f}</b> · {_win} kazanan / {_loss} kaybeden</div>"
+        + (f"<div style='font-size:12px;color:#8a6d1a;margin-top:6px;'>⚠️ Yalnızca {N} işlem "
+           f"(30'un altında) — fikir verir, istatistiksel olarak kesin değil.</div>" if _az else "")
+        + "</div>",
         unsafe_allow_html=True)
 
     # ---- KATMAN 2: 3-4 BASİT GÖRSEL ----
