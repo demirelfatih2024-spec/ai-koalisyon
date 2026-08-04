@@ -1039,6 +1039,13 @@ elif sayfa == "📉 TP/SL Analizi":
     def _snapshot_uret(cikti_dizini, period, demo, rejim_label="Tüm veri", rejim_deger="all"):
         df = _pd.read_csv(cikti_dizini / "trades.csv")
         xlsx = cikti_dizini / "analysis.xlsx"
+        # 🔴 KRİTİK DÜZELTME: trades.csv, analiz aracında HER ZAMAN tüm işlemleri
+        # (kod_rejimi kolonuyla) içerir. Seçilen rejim burada uygulanmazsa headline
+        # (N/PnL/kazanan) TÜM veriyi gösterir → "Güncel" seçili ama 77 işlem/-26.77.
+        # Headline'ı da rejime göre süzüyoruz ki whatif/tp_sweep (araçta zaten süzülü)
+        # ile TUTARLI olsun ve etiket gerçekten hesaplanan veriyi yansıtsın.
+        if rejim_deger and rejim_deger != "all" and "kod_rejimi" in df.columns:
+            df = df[df["kod_rejimi"] == rejim_deger].reset_index(drop=True)
         N = int(len(df))
         pnl = _pd.to_numeric(df.get("realizedPnl"), errors="coerce")
         win = int((pnl > 0).sum())
