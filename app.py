@@ -1036,7 +1036,7 @@ elif sayfa == "📉 TP/SL Analizi":
         except Exception:
             return []
 
-    def _snapshot_uret(cikti_dizini, period, demo):
+    def _snapshot_uret(cikti_dizini, period, demo, rejim_label="Tüm veri", rejim_deger="all"):
         df = _pd.read_csv(cikti_dizini / "trades.csv")
         xlsx = cikti_dizini / "analysis.xlsx"
         N = int(len(df))
@@ -1052,6 +1052,7 @@ elif sayfa == "📉 TP/SL Analizi":
         return {
             "zaman": _dt.now(_tz.utc).strftime("%d.%m.%Y %H:%M UTC"),
             "period": period, "demo": bool(demo),
+            "rejim": rejim_label, "rejim_deger": rejim_deger,   # GÖREV 3: rejim de saklanır
             "N": N, "win": win, "loss": loss, "pnl_sum": round(float(pnl.fillna(0).sum()), 4),
             "close_reasons": reasons,
             "tp_sweep": _sheet(xlsx, "tp_sweep", ["tp_target_R", "hit_rate_%", "expectancy_R"]),
@@ -1076,6 +1077,22 @@ elif sayfa == "📉 TP/SL Analizi":
                                        placeholder="BTC-USDT-SWAP,ETH-USDT-SWAP — boş = tümü")
             _demo = st.checkbox("Demo modu (API'siz, sentetik veriyle dene)", key="tpsl_demo")
 
+            # GÖREV 1: Kod rejimi seçici. Panelin asıl amacı "ŞU AN kârlı mıyız" olduğu için
+            # varsayılan 'Güncel'. (Güncel örneklemi küçükse boş dönebilir; aşağıda nazik uyarı var.)
+            _REJIM_SECENEK = {
+                "Güncel (tüm düzeltmeler sonrası)": "guncel",
+                "Tüm veri (karşılaştırma için)": "all",
+                "Kısmi düzeltme sonrası (hacim+MACD)": "kismi_duzeltme",
+                "Düzeltme öncesi": "duzeltme_oncesi",
+            }
+            _rejim_label = st.selectbox(
+                "Hangi kod rejimi gösterilsin?",
+                list(_REJIM_SECENEK.keys()), index=0, key="tpsl_rejim",
+                help="'Güncel' = bugünkü hacim/MACD/BEAT düzeltmeleri yürürlükteyken açılan işlemler "
+                     "('şu an kârlı mıyız'). 'Tüm veri' düzeltme öncesi+sonrasını karıştırır (daha büyük "
+                     "örneklem ama daha az güncel — kıyaslama için).")
+            _rejim_deger = _REJIM_SECENEK[_rejim_label]
+
             if st.button("▶ Analiz Et (yeniden hesapla)", type="primary"):
                 _env = dict(_os.environ)
                 try:
@@ -1098,6 +1115,8 @@ elif sayfa == "📉 TP/SL Analizi":
                         _komut += ["--end", _bit.strftime("%Y-%m-%d")]; _period[1] = _bit.strftime("%Y-%m-%d")
                     if _semboller.strip():
                         _komut += ["--symbols", _semboller.strip()]
+                # GÖREV 1: seçilen rejimi araca geç (demo dahil).
+                _komut += ["--rejim", _rejim_deger]
 
                 with st.spinner("Analiz çalışıyor... (mum verisi çekildiği için 1-3 dakika sürebilir)"):
                     try:
@@ -1110,12 +1129,20 @@ elif sayfa == "📉 TP/SL Analizi":
                 st.session_state["tpsl_stdout"] = _sonuc.stdout
                 st.session_state["tpsl_stderr"] = _sonuc.stderr
                 if _sonuc.returncode != 0:
-                    st.error(f"Analiz hata ile bitti (çıkış kodu {_sonuc.returncode}).")
-                    with st.expander("Hata ayrıntısı"):
-                        st.code(_sonuc.stderr or "(boş)", language="text")
+                    _cikti_hepsi = (_sonuc.stderr or "") + (_sonuc.stdout or "")
+                    if "işlem yok" in _cikti_hepsi or "rejiminde" in _cikti_hepsi:
+                        # Seçilen rejimde hiç işlem yok — hata değil, beklenen durum.
+                        st.info(f"ℹ️ Seçtiğiniz rejimde (**{_rejim_label}**) henüz işlem yok. "
+                                f"Düzeltmeler çok yeni olduğu için 'Güncel' örneklemi küçük olabilir — "
+                                f"**'Tüm veri'** veya **'Kısmi düzeltme sonrası'** seçmeyi deneyin.")
+                    else:
+                        st.error(f"Analiz hata ile bitti (çıkış kodu {_sonuc.returncode}).")
+                        with st.expander("Hata ayrıntısı"):
+                            st.code(_sonuc.stderr or "(boş)", language="text")
                 else:
                     try:
-                        _snap = _snapshot_uret(_analiz_dizini / "output", _period, _demo)
+                        _snap = _snapshot_uret(_analiz_dizini / "output", _period, _demo,
+                                               _rejim_label, _rejim_deger)
                         if _analiz_gecmisi_kaydet(_snap):
                             st.session_state["tpsl_taze"] = True   # bu oturumda tam HTML/Excel mevcut
                             st.success("✅ Analiz tamamlandı ve kalıcı olarak kaydedildi.")
@@ -1136,12 +1163,26 @@ elif sayfa == "📉 TP/SL Analizi":
                 "ilk analizi başlatın (denemek için 'Demo modu' yeterli).")
         st.stop()
 
-    # Geçmiş analiz seçici (en yeni varsayılan)
-    _etiket = lambda i: _analizler[i]["zaman"] + (" · demo" if _analizler[i].get("demo") else "")
+    # Geçmiş analiz seçici (en yeni varsayılan) — etikette rejim de görünsün
+    _etiket = lambda i: (f"{_analizler[i]['zaman']} · {_analizler[i].get('rejim', 'Tüm veri')}"
+                         + (" · demo" if _analizler[i].get("demo") else ""))
     _sirali = list(reversed(range(len(_analizler))))
     _idx = st.selectbox("Gösterilen analiz", _sirali, format_func=_etiket)
     A = _analizler[_idx]
     N = int(A.get("N", 0))
+
+    # ---- GÖREV 2: EN ÜSTTE HANGİ REJİM / TARİH / ÖRNEKLEM gösteriliyor ----
+    _rejim_gos = A.get("rejim", "Tüm veri")
+    _per = A.get("period", ["", ""])
+    _tarih_gos = ""
+    if isinstance(_per, (list, tuple)) and (len(_per) == 2) and (_per[0] or _per[1]):
+        _tarih_gos = f" · {_per[0] or '…'} → {_per[1] or 'şimdi'}"
+    st.markdown(
+        f"<div style='background:#EEF0FF;border:1px solid #7F77DD;border-radius:10px;"
+        f"padding:10px 16px;margin-bottom:10px;'>"
+        f"<span style='font-size:16px;font-weight:700;color:#3A2FA0;'>🧭 {_rejim_gos}</span>"
+        f"<span style='font-size:14px;color:#333;'> — <b>{N} işlem</b>{_tarih_gos}</span></div>",
+        unsafe_allow_html=True)
 
     # ---- KÜÇÜK ÖRNEKLEM UYARISI (göze çarpan banner) ----
     if N < 30:
