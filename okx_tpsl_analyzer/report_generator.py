@@ -48,6 +48,25 @@ def _round(value: float, digits: int = 6) -> float:
     return round(value, digits) if isinstance(value, float) and math.isfinite(value) else value
 
 
+# ─── GÖREV 1.1: Kod rejimi (hangi düzeltmeler yürürlükteyken açıldı) ──────────
+# Sınırlar, ilgili commit'lerin UTC zaman damgalarından (ms):
+#   hacim+MACD düzeltmesi (782db8d/7ba4a0c)  = 2026-08-03 08:19:18 UTC
+#   BEAT/yasaklı coin engeli (d50d4dc)        = 2026-08-04 03:34:01 UTC
+REJIM_HACIM_MACD_MS = int(datetime(2026, 8, 3, 8, 19, 18, tzinfo=timezone.utc).timestamp() * 1000)
+REJIM_BEAT_MS = int(datetime(2026, 8, 4, 3, 34, 1, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def kod_rejimi(open_time_ms: int) -> str:
+    """Pozisyonun AÇILIŞ zamanına göre kod rejimi etiketi."""
+    if open_time_ms is None:
+        return "bilinmiyor"
+    if open_time_ms < REJIM_HACIM_MACD_MS:
+        return "duzeltme_oncesi"      # hacim/MACD hatalıyken açıldı
+    if open_time_ms < REJIM_BEAT_MS:
+        return "kismi_duzeltme"        # hacim+MACD düzeldi, BEAT engeli henüz yok
+    return "guncel"                    # tüm düzeltmeler yürürlükte
+
+
 # ------------------------------------------------------------- trade table
 
 
@@ -70,6 +89,7 @@ def build_trade_table(analyses: list[TradeAnalysis]) -> pd.DataFrame:
                 "closePx": _round(pos.close_avg_px),
                 "closeReason": trade.close_reason.value,
                 "classificationBasis": trade.classification_basis,
+                "kod_rejimi": kod_rejimi(pos.open_time),   # GÖREV 1.1
                 "openTime": _ts(pos.open_time),
                 "closeTime": _ts(pos.close_time),
                 "holdHours": _round((pos.close_time - pos.open_time) / 3_600_000, 3),

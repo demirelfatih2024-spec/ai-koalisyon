@@ -65,6 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", default=None, help="output directory")
     p.add_argument("--demo", action="store_true", help="run on synthetic data, no API key")
     p.add_argument("--max-hours", type=float, default=None, help="override extension cap")
+    p.add_argument(
+        "--rejim",
+        default="all",
+        choices=["all", "guncel", "kismi_duzeltme", "duzeltme_oncesi"],
+        help="GÖREV 1.1: whatif/tp_sweep/dist/recommendations'ı sadece bu kod rejimindeki "
+             "işlemlerden hesapla ('guncel' = tüm düzeltmeler yürürlükteyken açılanlar)",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -247,19 +254,45 @@ def main(argv: list[str] | None = None) -> int:
         analyses.append(analyze_trade(trade, window, ext_cfg, atr=atr))
         candles_by_trade[trade_key(analyses[-1])] = window
 
+    # ── GÖREV 1.1: rejim filtresi ────────────────────────────────────────────
+    # whatif/tp_sweep/distributions/recommendations, seçilen rejimdeki işlemlerden
+    # hesaplanır. trades.csv HER ZAMAN tüm işlemleri (kod_rejimi kolonuyla) içerir.
+    from report_generator import kod_rejimi as _kod_rejimi
+    _rejim_dagilimi = {}
+    for a in analyses:
+        _r = _kod_rejimi(a.trade.position.open_time)
+        _rejim_dagilimi[_r] = _rejim_dagilimi.get(_r, 0) + 1
+    log.info("kod rejimi dağılımı: %s", _rejim_dagilimi)
+    if args.rejim != "all":
+        analyses_opt = [a for a in analyses if _kod_rejimi(a.trade.position.open_time) == args.rejim]
+        log.info("rejim filtresi '%s': %d/%d işlem seçildi", args.rejim, len(analyses_opt), len(analyses))
+        if not analyses_opt:
+            log.error("'%s' rejiminde işlem yok — çıkılıyor.", args.rejim)
+            return 1
+        if len(analyses_opt) < 15:
+            warnings.append(
+                f"<strong>⚠️ Örneklem küçük:</strong> '{args.rejim}' rejiminde yalnızca "
+                f"{len(analyses_opt)} işlem var. whatif/tp_sweep/öneriler istatistiksel olarak "
+                f"güvenilir değil — yön verici, kesin değil."
+            )
+    else:
+        analyses_opt = analyses   # 'all': optimizer tüm işlemler üzerinde
+
     # ----------------------------------------------------------- optimising
-    excursions = excursion_frame(analyses)
+    # NOT: trades tablosu HER ZAMAN tüm işlemleri (kod_rejimi kolonuyla) içerir;
+    # yalnızca aşağıdaki optimizasyon tabloları rejime göre filtrelenmiş 'analyses_opt' kullanır.
+    excursions = excursion_frame(analyses_opt)
     distributions = describe_distributions(excursions)
-    sweep = tp_sweep(analyses)
+    sweep = tp_sweep(analyses_opt)
     scenarios, _ = whatif_backtest(
-        analyses,
+        analyses_opt,
         candles_by_trade,
         tp_mults=settings.whatif_tp_mults,
         sl_mults=settings.whatif_sl_mults,
         max_hours=ext_cfg.max_hours,
     )
     scaled = scaled_exit_study(
-        analyses, candles_by_trade, max_hours=ext_cfg.max_hours
+        analyses_opt, candles_by_trade, max_hours=ext_cfg.max_hours
     )
     recommendations = recommend_levels(excursions)
 
