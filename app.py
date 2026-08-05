@@ -1037,22 +1037,42 @@ elif sayfa == "📉 TP/SL Analizi":
             return []
 
     def _snapshot_uret(cikti_dizini, period, demo, rejim_label="Tüm veri", rejim_deger="all"):
-        df = _pd.read_csv(cikti_dizini / "trades.csv")
         xlsx = cikti_dizini / "analysis.xlsx"
-        # 🔴 KRİTİK DÜZELTME: trades.csv, analiz aracında HER ZAMAN tüm işlemleri
-        # (kod_rejimi kolonuyla) içerir. Seçilen rejim burada uygulanmazsa headline
-        # (N/PnL/kazanan) TÜM veriyi gösterir → "Güncel" seçili ama 77 işlem/-26.77.
-        # Headline'ı da rejime göre süzüyoruz ki whatif/tp_sweep (araçta zaten süzülü)
-        # ile TUTARLI olsun ve etiket gerçekten hesaplanan veriyi yansıtsın.
-        if rejim_deger and rejim_deger != "all" and "kod_rejimi" in df.columns:
-            df = df[df["kod_rejimi"] == rejim_deger].reset_index(drop=True)
-        N = int(len(df))
-        pnl = _pd.to_numeric(df.get("realizedPnl"), errors="coerce")
-        win = int((pnl > 0).sum())
-        loss = int((pnl < 0).sum())
-        reasons = {}
-        if "closeReason" in df.columns:
-            reasons = {str(k): int(v) for k, v in df["closeReason"].value_counts().items()}
+        # 🟢 TEK KAYNAK: headline (N/PnL/kazanan/kaybeden), whatif/tp_sweep ile TAM AYNI
+        # 'analyses_opt' kümesinden gelen ozet.json'dan okunur. Böylece ekran özeti ile
+        # xlsx çıktısı asla çelişmez (eskiden headline trades.csv'den, whatif xlsx'ten
+        # geliyordu → bayat xlsx'te çelişki oluşuyordu).
+        _ozet = None
+        _ozet_yolu = cikti_dizini / "ozet.json"
+        if _ozet_yolu.exists():
+            try:
+                import json as _json2
+                _ok = _json2.loads(_ozet_yolu.read_text(encoding="utf-8"))
+                # Rejim uyuşuyorsa kullan (bayat/eş olmayan ozet'i reddet).
+                if str(_ok.get("rejim")) == str(rejim_deger):
+                    _ozet = _ok
+            except Exception:
+                _ozet = None
+
+        if _ozet is not None:
+            N = int(_ozet.get("N", 0))
+            win = int(_ozet.get("win", 0))
+            loss = int(_ozet.get("loss", 0))
+            pnl_sum_val = round(float(_ozet.get("pnl_sum", 0.0)), 4)
+            reasons = {str(k): int(v) for k, v in (_ozet.get("close_reasons") or {}).items()}
+        else:
+            # Geri uyum: ozet.json yoksa/rejim uyuşmuyorsa trades.csv'yi kod_rejimi'ne göre süz.
+            df = _pd.read_csv(cikti_dizini / "trades.csv")
+            if rejim_deger and rejim_deger != "all" and "kod_rejimi" in df.columns:
+                df = df[df["kod_rejimi"] == rejim_deger].reset_index(drop=True)
+            N = int(len(df))
+            pnl = _pd.to_numeric(df.get("realizedPnl"), errors="coerce")
+            win = int((pnl > 0).sum())
+            loss = int((pnl < 0).sum())
+            pnl_sum_val = round(float(pnl.fillna(0).sum()), 4)
+            reasons = {}
+            if "closeReason" in df.columns:
+                reasons = {str(k): int(v) for k, v in df["closeReason"].value_counts().items()}
         whatif = _sheet(xlsx, "whatif",
                         ["tp_mult", "sl_mult", "trades", "timeout_%", "win_rate_%",
                          "expectancy_R", "resolved_expectancy_R", "profit_factor", "reliable"], limit=12)
@@ -1060,7 +1080,7 @@ elif sayfa == "📉 TP/SL Analizi":
             "zaman": _dt.now(_tz.utc).strftime("%d.%m.%Y %H:%M UTC"),
             "period": period, "demo": bool(demo),
             "rejim": rejim_label, "rejim_deger": rejim_deger,   # GÖREV 3: rejim de saklanır
-            "N": N, "win": win, "loss": loss, "pnl_sum": round(float(pnl.fillna(0).sum()), 4),
+            "N": N, "win": win, "loss": loss, "pnl_sum": pnl_sum_val,
             "close_reasons": reasons,
             "tp_sweep": _sheet(xlsx, "tp_sweep", ["tp_target_R", "hit_rate_%", "expectancy_R"]),
             "whatif": whatif,

@@ -98,6 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     settings.ensure_dirs()
     output_dir = Path(args.output) if args.output else settings.output_dir
+    # STALE ÇIKTI TEMİZLİĞİ: önceki (farklı rejimli) koşunun dosyaları kalırsa,
+    # xlsx yazımı bir hata ile atlanırsa vb. panel headline (taze trades.csv) ile
+    # xlsx (bayat) ÇELİŞİR. Her koşu başında eski çıktıları siliyoruz.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for _eski in ("trades.csv", "analysis.xlsx", "report.html", "ozet.json"):
+        try:
+            (output_dir / _eski).unlink(missing_ok=True)
+        except Exception:
+            pass
     bar = args.bar or settings.bar
     ext_cfg = settings.extension
     if args.max_hours is not None:
@@ -295,6 +304,30 @@ def main(argv: list[str] | None = None) -> int:
         analyses_opt, candles_by_trade, max_hours=ext_cfg.max_hours
     )
     recommendations = recommend_levels(excursions)
+
+    # ── TEK KAYNAK ÖZET (ozet.json) ──────────────────────────────────────────
+    # Panel headline'ı (N/kazanan/kaybeden/PnL), whatif/tp_sweep ile TAM AYNI
+    # 'analyses_opt' kümesinden üretilir ki iki çıktı asla çelişmesin.
+    import json as _json_ozet
+    _oz_pnls = [float(a.trade.position.realized_pnl or 0) for a in analyses_opt]
+    _oz_reasons = {}
+    for a in analyses_opt:
+        _rk = a.trade.close_reason.value
+        _oz_reasons[_rk] = _oz_reasons.get(_rk, 0) + 1
+    _ozet = {
+        "rejim": args.rejim,
+        "N": len(analyses_opt),
+        "win": sum(1 for p in _oz_pnls if p > 0),
+        "loss": sum(1 for p in _oz_pnls if p < 0),
+        "pnl_sum": round(sum(_oz_pnls), 4),
+        "close_reasons": _oz_reasons,
+    }
+    try:
+        (output_dir / "ozet.json").write_text(
+            _json_ozet.dumps(_ozet, ensure_ascii=False), encoding="utf-8")
+        log.info("ozet.json yazıldı: %s", _ozet)
+    except Exception as exc:
+        log.warning("ozet.json yazılamadı: %s", exc)
 
     # ------------------------------------------------------------ reporting
     period = (
